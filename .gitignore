@@ -46,3 +46,13 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Environment variables
+.env
+.env.local
+.env.*
+!.env.example
+
+# Local tooling and dependencies
+node_modules/
+supabase/.temp/

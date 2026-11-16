@@ -1,15 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:video_player/video_player.dart';
 
 import '../models/models.dart';
 import '../services/auth_service.dart';
 import '../services/chat_service.dart';
+import '../services/chat_media_service.dart';
 import '../services/dm_service.dart';
 import '../services/friend_service.dart';
 import '../services/profile_service.dart';
 import '../services/server_service.dart';
-import '../services/supabase_client.dart';
 import '../voice/voice_call_screen.dart';
 import 'profile_screen.dart';
 
@@ -31,6 +36,50 @@ class _C {
   static const divider = Color(0xFF3F4147);
 }
 
+class _ChatAvatar extends StatelessWidget {
+  final String displayName;
+  final String? avatarUrl;
+
+  const _ChatAvatar({
+    required this.displayName,
+    required this.avatarUrl,
+  });
+
+  Widget _initial() {
+    return Text(
+      displayName.isNotEmpty ? displayName[0].toUpperCase() : '?',
+      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (avatarUrl == null || avatarUrl!.isEmpty) {
+      return CircleAvatar(
+        radius: 20,
+        backgroundColor: _C.blurple,
+        child: _initial(),
+      );
+    }
+
+    return CircleAvatar(
+      radius: 20,
+      backgroundColor: _C.blurple,
+      child: ClipOval(
+        child: Image.network(
+          avatarUrl!,
+          width: 40,
+          height: 40,
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, progress) =>
+              progress == null ? child : _initial(),
+          errorBuilder: (context, error, stackTrace) => _initial(),
+        ),
+      ),
+    );
+  }
+}
+
 // =========================================================================
 // ESTRUTURA DE CANAIS
 // =========================================================================
@@ -46,7 +95,11 @@ enum ChannelType { text, voice }
 class ChannelDef {
   final String name;
   final ChannelType type;
-  const ChannelDef(this.name, this.type);
+  final String? displayName;
+
+  const ChannelDef(this.name, this.type, {this.displayName});
+
+  String get label => displayName ?? name;
 }
 
 class CategoryDef {
@@ -57,13 +110,11 @@ class CategoryDef {
 
 const List<CategoryDef> _builtInCategories = [
   CategoryDef('CANAIS DE TEXTO', [
-    ChannelDef('geral', ChannelType.text),
+    ChannelDef('geral', ChannelType.text, displayName: 'chat global'),
     ChannelDef('anúncios', ChannelType.text),
-    ChannelDef('dúvidas-flutter', ChannelType.text),
   ]),
   CategoryDef('CANAIS DE VOZ', [
-    ChannelDef('Sala Geral', ChannelType.voice),
-    ChannelDef('Estudando Juntos', ChannelType.voice),
+    ChannelDef('Sala Geral', ChannelType.voice, displayName: 'Sala Global'),
   ]),
 ];
 
@@ -76,7 +127,8 @@ const String kBuiltInServerId = 'default';
 /// pelo servidor "Cord" — assim toda a UI de canais (`_ChannelSidebar`,
 /// `_CategorySection`, `_ChannelTile`) é 100% reaproveitada, sem
 /// precisar de nenhuma versão "dinâmica" separada dos widgets.
-List<CategoryDef> _categoriesFromServerChannels(List<ServerChannelModel> channels) {
+List<CategoryDef> _categoriesFromServerChannels(
+    List<ServerChannelModel> channels) {
   final textChannels = channels
       .where((c) => c.type == ServerChannelType.text)
       .map((c) => ChannelDef(c.name, ChannelType.text))
@@ -132,6 +184,18 @@ class _CordHomePageState extends State<CordHomePage> {
   String selectedChannel = 'geral';
   bool showMembersPanel = true;
 
+  String get _selectedChannelLabel {
+    for (final category in currentCategories) {
+      for (final channel in category.channels) {
+        if (channel.type == ChannelType.text &&
+            channel.name == selectedChannel) {
+          return channel.label;
+        }
+      }
+    }
+    return selectedChannel;
+  }
+
   // Conversa privada aberta no momento (null = mostrando a lista de
   // amigos, não uma conversa específica).
   DmConversation? activeDmConversation;
@@ -178,6 +242,20 @@ class _CordHomePageState extends State<CordHomePage> {
     }
   }
 
+  Future<void> _refreshMyServersAfterVoiceInvite() async {
+    try {
+      final servers = await ServerService.fetchMyServers(widget.userId);
+      if (mounted) setState(() => myServers = servers);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Não foi possível atualizar os servidores: $e')),
+        );
+      }
+    }
+  }
+
   /// Troca de servidor selecionado. Para o "Cord" fixo, os canais já
   /// são conhecidos (estáticos); para um servidor real, busca os
   /// canais no banco antes de exibir.
@@ -201,7 +279,8 @@ class _CordHomePageState extends State<CordHomePage> {
       final categories = _categoriesFromServerChannels(channels);
       final firstTextChannel = categories
           .expand((c) => c.channels)
-          .firstWhere((c) => c.type == ChannelType.text, orElse: () => const ChannelDef('geral', ChannelType.text))
+          .firstWhere((c) => c.type == ChannelType.text,
+              orElse: () => const ChannelDef('geral', ChannelType.text))
           .name;
 
       if (!mounted) return;
@@ -213,8 +292,8 @@ class _CordHomePageState extends State<CordHomePage> {
     } catch (e) {
       if (mounted) {
         setState(() => loadingChannels = false);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erro ao carregar canais: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao carregar canais: $e')));
       }
     }
   }
@@ -252,8 +331,8 @@ class _CordHomePageState extends State<CordHomePage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erro ao criar servidor: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao criar servidor: $e')));
       }
     }
   }
@@ -343,7 +422,8 @@ class _CordHomePageState extends State<CordHomePage> {
       await Clipboard.setData(ClipboardData(text: code));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Convite copiado. Ele expira em 7 dias.')),
+          const SnackBar(
+              content: Text('Convite copiado. Ele expira em 7 dias.')),
         );
       }
     } catch (e) {
@@ -405,8 +485,8 @@ class _CordHomePageState extends State<CordHomePage> {
       // inclusive para outros usuários vendo o mesmo canal.
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erro ao enviar mensagem: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao enviar mensagem: $e')));
       }
     }
   }
@@ -426,15 +506,50 @@ class _CordHomePageState extends State<CordHomePage> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erro ao enviar mensagem: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao enviar mensagem: $e')));
       }
     }
   }
 
+  Future<void> _sendChannelMedia({
+    required String channelName,
+    required String serverId,
+    required XFile file,
+  }) async {
+    final attachment = await ChatMediaService.upload(
+      userId: widget.userId,
+      file: file,
+    );
+    await ChatService.sendMessage(
+      channel: channelName,
+      serverId: serverId,
+      senderId: widget.userId,
+      content: _messageController.text,
+      attachment: attachment,
+    );
+    _messageController.clear();
+  }
+
+  Future<void> _sendDmMedia(XFile file) async {
+    final conversation = activeDmConversation;
+    if (conversation == null) return;
+    final attachment = await ChatMediaService.upload(
+      userId: widget.userId,
+      file: file,
+    );
+    await DmService.sendMessage(
+      conversationId: conversation.id,
+      senderId: widget.userId,
+      content: _dmMessageController.text,
+      attachment: attachment,
+    );
+    _dmMessageController.clear();
+  }
+
   Future<void> _selectChannel(ChannelDef channel) async {
     if (channel.type == ChannelType.voice) {
-      await _joinVoiceChannel(channel.name);
+      await _joinVoiceChannel(channel.name, displayName: channel.label);
       return;
     }
     setState(() => selectedChannel = channel.name);
@@ -443,7 +558,10 @@ class _CordHomePageState extends State<CordHomePage> {
   /// Abre a tela de chamada de voz de verdade (Agora + Presence). O
   /// `roomId` combina servidor + canal para que dois canais com o
   /// mesmo nome em servidores diferentes nunca caiam na mesma "sala".
-  Future<void> _joinVoiceChannel(String channelName) async {
+  Future<void> _joinVoiceChannel(
+    String channelName, {
+    String? displayName,
+  }) async {
     Profile? profile;
     try {
       profile = await ProfileService.fetchProfile(widget.userId);
@@ -453,16 +571,15 @@ class _CordHomePageState extends State<CordHomePage> {
     }
 
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => VoiceCallScreen(
-          channelName: channelName,
+    await Navigator.of(context).push<void>(
+      buildVoiceCallRoute(
+        VoiceCallScreen(
+          channelName: displayName ?? channelName,
           roomId: '$selectedServerId::$channelName',
           myUserId: widget.userId,
           myDisplayName: profile?.displayName ?? 'Você',
           myAvatarUrl: profile?.avatarUrl,
         ),
-        fullscreenDialog: true,
       ),
     );
   }
@@ -485,8 +602,8 @@ class _CordHomePageState extends State<CordHomePage> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erro ao abrir conversa: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao abrir conversa: $e')));
       }
     }
   }
@@ -535,9 +652,11 @@ class _CordHomePageState extends State<CordHomePage> {
               serverName: currentServerName,
               serverIsPublic: _activeServer?.isPublic,
               canManageServer: _activeServer?.ownerId == widget.userId,
-              onCreateInvite: _activeServer == null ? null : _createServerInvite,
-              onToggleVisibility:
-                  _activeServer?.ownerId == widget.userId ? _toggleServerVisibility : null,
+              onCreateInvite:
+                  _activeServer == null ? null : _createServerInvite,
+              onToggleVisibility: _activeServer?.ownerId == widget.userId
+                  ? _toggleServerVisibility
+                  : null,
               categories: currentCategories,
               selectedChannel: selectedChannel,
               onChannelTap: _selectChannel,
@@ -550,19 +669,28 @@ class _CordHomePageState extends State<CordHomePage> {
               myUserId: widget.userId,
               activeConversationId: activeDmConversation?.id,
               onFriendsTap: () => setState(() => activeDmConversation = null),
-              onOpenConversation: (conv) => setState(() => activeDmConversation = conv),
+              onOpenConversation: (conv) =>
+                  setState(() => activeDmConversation = conv),
               width: sidebarWidth,
             ),
           Expanded(
             child: navArea == _NavArea.server
                 ? (loadingChannels
-                    ? const Center(child: CircularProgressIndicator(color: _C.blurple))
+                    ? const Center(
+                        child: CircularProgressIndicator(color: _C.blurple))
                     : _ChatArea(
                         channelName: selectedChannel,
+                        displayName: _selectedChannelLabel,
                         controller: _messageController,
                         scrollController: _scrollController,
                         onSend: () => _sendMessage(selectedChannel),
-                        onToggleMembers: () => setState(() => showMembersPanel = !showMembersPanel),
+                        onSendMedia: (file) => _sendChannelMedia(
+                          channelName: selectedChannel,
+                          serverId: selectedServerId,
+                          file: file,
+                        ),
+                        onToggleMembers: () => setState(
+                            () => showMembersPanel = !showMembersPanel),
                         membersPanelOpen: showMembersPanel,
                         myUserId: widget.userId,
                         serverId: selectedServerId,
@@ -573,7 +701,9 @@ class _CordHomePageState extends State<CordHomePage> {
                         controller: _dmMessageController,
                         scrollController: _dmScrollController,
                         onSend: _sendDmMessage,
+                        onSendMedia: _sendDmMedia,
                         myUserId: widget.userId,
+                        onPublicServerJoined: _refreshMyServersAfterVoiceInvite,
                       )
                     : _FriendsMainPanel(
                         myUserId: widget.userId,
@@ -602,13 +732,19 @@ class _CordHomePageState extends State<CordHomePage> {
         backgroundColor: _C.darkest,
         child: SafeArea(
           child: _ServerRail(
-            navArea: _NavArea.server, // a gaveta sempre mostra o servidor como "ativo"
+            navArea: _NavArea
+                .server, // a gaveta sempre mostra o servidor como "ativo"
             servers: myServers,
             selectedServerId: selectedServerId,
             onHomeTap: () {
               Navigator.of(context).pop(); // fecha a gaveta
               Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => _MobileFriendsScreen(myUserId: widget.userId)),
+                MaterialPageRoute(
+                  builder: (_) => _MobileFriendsScreen(
+                    myUserId: widget.userId,
+                    onPublicServerJoined: _refreshMyServersAfterVoiceInvite,
+                  ),
+                ),
               );
             },
             onSelectServer: (id) {
@@ -627,7 +763,8 @@ class _CordHomePageState extends State<CordHomePage> {
         elevation: 0,
         title: Text(currentServerName,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _C.textHeader, fontWeight: FontWeight.bold)),
+            style: const TextStyle(
+                color: _C.textHeader, fontWeight: FontWeight.bold)),
         actions: [
           if (_activeServer != null)
             _ServerActionsMenu(
@@ -644,9 +781,11 @@ class _CordHomePageState extends State<CordHomePage> {
               serverName: currentServerName,
               serverIsPublic: _activeServer?.isPublic,
               canManageServer: _activeServer?.ownerId == widget.userId,
-              onCreateInvite: _activeServer == null ? null : _createServerInvite,
-              onToggleVisibility:
-                  _activeServer?.ownerId == widget.userId ? _toggleServerVisibility : null,
+              onCreateInvite:
+                  _activeServer == null ? null : _createServerInvite,
+              onToggleVisibility: _activeServer?.ownerId == widget.userId
+                  ? _toggleServerVisibility
+                  : null,
               categories: currentCategories,
               selectedChannel: selectedChannel,
               userId: widget.userId,
@@ -662,9 +801,15 @@ class _CordHomePageState extends State<CordHomePage> {
                   MaterialPageRoute(
                     builder: (_) => _MobileChatScreen(
                       channelName: channel.name,
+                      displayName: channel.label,
                       controller: _messageController,
                       scrollController: _scrollController,
                       onSend: () => _sendMessage(channel.name),
+                      onSendMedia: (file) => _sendChannelMedia(
+                        channelName: channel.name,
+                        serverId: selectedServerId,
+                        file: file,
+                      ),
                       myUserId: widget.userId,
                       serverId: selectedServerId,
                     ),
@@ -724,7 +869,8 @@ class _ServerRail extends StatelessWidget {
               children: [
                 _RailIcon(
                   tooltip: 'Cord',
-                  isActive: !isFriendsActive && selectedServerId == kBuiltInServerId,
+                  isActive:
+                      !isFriendsActive && selectedServerId == kBuiltInServerId,
                   icon: Icons.forum_rounded,
                   onTap: () => onSelectServer(kBuiltInServerId),
                 ),
@@ -756,7 +902,8 @@ class _ServerRail extends StatelessWidget {
                     borderRadius: BorderRadius.circular(24),
                   ),
                   alignment: Alignment.center,
-                  child: const Icon(Icons.add_rounded, color: _C.green, size: 26),
+                  child:
+                      const Icon(Icons.add_rounded, color: _C.green, size: 26),
                 ),
               ),
             ),
@@ -810,7 +957,9 @@ class _RailIcon extends StatelessWidget {
                 : Text(
                     label ?? '?',
                     style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16),
                   ),
           ),
         ),
@@ -854,7 +1003,10 @@ class _CreateServerDialogState extends State<_CreateServerDialog> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text('Criar servidor',
-                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
             const Text(
               'Seu novo servidor já nasce com um canal de texto ("geral") e um de voz.',
@@ -898,16 +1050,19 @@ class _CreateServerDialogState extends State<_CreateServerDialog> {
                     onPressed: () => Navigator.of(context).pop(),
                     style: OutlinedButton.styleFrom(
                       side: const BorderSide(color: _C.textMuted),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4)),
                     ),
-                    child: const Text('Cancelar', style: TextStyle(color: Colors.white)),
+                    child: const Text('Cancelar',
+                        style: TextStyle(color: Colors.white)),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () => Navigator.of(context).pop(_serverData),
-                    style: ElevatedButton.styleFrom(backgroundColor: _C.blurple),
+                    style:
+                        ElevatedButton.styleFrom(backgroundColor: _C.blurple),
                     child: const Text('Criar'),
                   ),
                 ),
@@ -1013,7 +1168,8 @@ class _PublicServersDialogState extends State<_PublicServersDialog> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : filteredServers.isEmpty
-                      ? const Center(child: Text('Nenhum servidor público encontrado.'))
+                      ? const Center(
+                          child: Text('Nenhum servidor público encontrado.'))
                       : ListView.builder(
                           itemCount: filteredServers.length,
                           itemBuilder: (context, index) {
@@ -1033,7 +1189,8 @@ class _PublicServersDialogState extends State<_PublicServersDialog> {
                                     ? const SizedBox(
                                         width: 18,
                                         height: 18,
-                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
                                       )
                                     : const Text('Entrar'),
                               ),
@@ -1228,7 +1385,8 @@ class _ChannelTile extends StatefulWidget {
   final bool isSelected;
   final VoidCallback onTap;
 
-  const _ChannelTile({required this.channel, required this.isSelected, required this.onTap});
+  const _ChannelTile(
+      {required this.channel, required this.isSelected, required this.onTap});
 
   @override
   State<_ChannelTile> createState() => _ChannelTileState();
@@ -1255,7 +1413,8 @@ class _ChannelTileState extends State<_ChannelTile> {
             duration: const Duration(milliseconds: 120),
             height: 34,
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(4)),
+            decoration: BoxDecoration(
+                color: bg, borderRadius: BorderRadius.circular(4)),
             child: Row(
               children: [
                 Icon(
@@ -1268,12 +1427,13 @@ class _ChannelTileState extends State<_ChannelTile> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    widget.channel.name,
+                    widget.channel.label,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: widget.isSelected ? Colors.white : _C.textMuted,
                       fontSize: 15,
-                      fontWeight: widget.isSelected ? FontWeight.w600 : FontWeight.w500,
+                      fontWeight:
+                          widget.isSelected ? FontWeight.w600 : FontWeight.w500,
                     ),
                   ),
                 ),
@@ -1342,7 +1502,8 @@ class _UserFooter extends StatelessWidget {
         builder: (context, snapshot) {
           final profile = snapshot.data;
           final displayName = profile?.displayName ?? '...';
-          final initial = displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
+          final initial =
+              displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
 
           return InkWell(
             // Clicar em qualquer parte do rodapé (não só no avatar) abre
@@ -1350,7 +1511,8 @@ class _UserFooter extends StatelessWidget {
             // de usuário no canto inferior esquerdo do Discord.
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (_) => ProfileScreen(userId: userId, isOwnProfile: true),
+                builder: (_) =>
+                    ProfileScreen(userId: userId, isOwnProfile: true),
               ),
             ),
             child: Padding(
@@ -1360,17 +1522,20 @@ class _UserFooter extends StatelessWidget {
                   CircleAvatar(
                     radius: 16,
                     backgroundColor: _C.blurple,
-                    backgroundImage:
-                        profile?.avatarUrl != null ? NetworkImage(profile!.avatarUrl!) : null,
+                    backgroundImage: profile?.avatarUrl != null
+                        ? NetworkImage(profile!.avatarUrl!)
+                        : null,
                     child: profile?.avatarUrl == null
-                        ? Text(initial, style: const TextStyle(color: Colors.white))
+                        ? Text(initial,
+                            style: const TextStyle(color: Colors.white))
                         : null,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(displayName,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white, fontSize: 13)),
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 13)),
                   ),
                 ],
               ),
@@ -1415,7 +1580,8 @@ class _FriendsSidebarState extends State<_FriendsSidebar> {
   void initState() {
     super.initState();
     _conversationsFuture = DmService.fetchMyConversations(widget.myUserId);
-    _pendingRequestsFuture = FriendService.fetchPendingReceived(widget.myUserId);
+    _pendingRequestsFuture =
+        FriendService.fetchPendingReceived(widget.myUserId);
   }
 
   /// Chame depois de abrir uma conversa nova (que ainda não estava na
@@ -1423,7 +1589,8 @@ class _FriendsSidebarState extends State<_FriendsSidebar> {
   void _refresh() {
     setState(() {
       _conversationsFuture = DmService.fetchMyConversations(widget.myUserId);
-      _pendingRequestsFuture = FriendService.fetchPendingReceived(widget.myUserId);
+      _pendingRequestsFuture =
+          FriendService.fetchPendingReceived(widget.myUserId);
     });
   }
 
@@ -1451,14 +1618,17 @@ class _FriendsSidebarState extends State<_FriendsSidebar> {
             ),
             child: const Text('Amigos',
                 style: TextStyle(
-                    color: _C.textHeader, fontWeight: FontWeight.bold, fontSize: 15)),
+                    color: _C.textHeader,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15)),
           ),
           Expanded(
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   child: _NavRow(
                     icon: Icons.people_alt_rounded,
                     label: 'Amigos',
@@ -1486,7 +1656,9 @@ class _FriendsSidebarState extends State<_FriendsSidebar> {
                           child: Text(
                             'PEDIDOS DE AMIZADE (${requests.length})',
                             style: const TextStyle(
-                                color: _C.textMuted, fontSize: 12, fontWeight: FontWeight.w700),
+                                color: _C.textMuted,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700),
                           ),
                         ),
                         for (final request in requests)
@@ -1504,7 +1676,9 @@ class _FriendsSidebarState extends State<_FriendsSidebar> {
                   padding: EdgeInsets.fromLTRB(16, 12, 8, 4),
                   child: Text('CONVERSAS PRIVADAS',
                       style: TextStyle(
-                          color: _C.textMuted, fontSize: 12, fontWeight: FontWeight.w700)),
+                          color: _C.textMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700)),
                 ),
                 FutureBuilder<List<DmConversation>>(
                   future: _conversationsFuture,
@@ -1513,7 +1687,8 @@ class _FriendsSidebarState extends State<_FriendsSidebar> {
                       return const Padding(
                         padding: EdgeInsets.all(16),
                         child: Center(
-                            child: CircularProgressIndicator(color: _C.blurple, strokeWidth: 2)),
+                            child: CircularProgressIndicator(
+                                color: _C.blurple, strokeWidth: 2)),
                       );
                     }
                     final conversations = snapshot.data!;
@@ -1521,7 +1696,8 @@ class _FriendsSidebarState extends State<_FriendsSidebar> {
                       return const Padding(
                         padding: EdgeInsets.symmetric(horizontal: 16),
                         child: Text('Nenhuma conversa ainda.',
-                            style: TextStyle(color: _C.textMuted, fontSize: 13)),
+                            style:
+                                TextStyle(color: _C.textMuted, fontSize: 13)),
                       );
                     }
                     return Column(
@@ -1530,7 +1706,8 @@ class _FriendsSidebarState extends State<_FriendsSidebar> {
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 8),
                             child: _NavRow(
-                              avatarLetter: conv.otherUser.displayName.isNotEmpty
+                              avatarLetter: conv
+                                      .otherUser.displayName.isNotEmpty
                                   ? conv.otherUser.displayName[0].toUpperCase()
                                   : '?',
                               avatarUrl: conv.otherUser.avatarUrl,
@@ -1589,7 +1766,10 @@ class _PendingRequestRow extends StatelessWidget {
             child: Text(
               request.otherUser.displayName,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500),
             ),
           ),
           IconButton(
@@ -1657,20 +1837,25 @@ class _NavRowState extends State<_NavRow> {
           child: Container(
             height: 42,
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(4)),
+            decoration: BoxDecoration(
+                color: bg, borderRadius: BorderRadius.circular(4)),
             child: Row(
               children: [
                 if (widget.icon != null)
-                  Icon(widget.icon, size: 20, color: widget.isActive ? Colors.white : _C.textMuted)
+                  Icon(widget.icon,
+                      size: 20,
+                      color: widget.isActive ? Colors.white : _C.textMuted)
                 else
                   CircleAvatar(
                     radius: 12,
                     backgroundColor: _C.blurple,
-                    backgroundImage:
-                        widget.avatarUrl != null ? NetworkImage(widget.avatarUrl!) : null,
+                    backgroundImage: widget.avatarUrl != null
+                        ? NetworkImage(widget.avatarUrl!)
+                        : null,
                     child: widget.avatarUrl == null
                         ? Text(widget.avatarLetter ?? '?',
-                            style: const TextStyle(color: Colors.white, fontSize: 11))
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 11))
                         : null,
                   ),
                 const SizedBox(width: 10),
@@ -1681,7 +1866,8 @@ class _NavRowState extends State<_NavRow> {
                     style: TextStyle(
                       color: widget.isActive ? Colors.white : _C.textMuted,
                       fontSize: 15,
-                      fontWeight: widget.isActive ? FontWeight.w600 : FontWeight.w500,
+                      fontWeight:
+                          widget.isActive ? FontWeight.w600 : FontWeight.w500,
                     ),
                   ),
                 ),
@@ -1702,7 +1888,8 @@ class _FriendsMainPanel extends StatefulWidget {
   final String myUserId;
   final ValueChanged<Profile> onOpenConversation;
 
-  const _FriendsMainPanel({required this.myUserId, required this.onOpenConversation});
+  const _FriendsMainPanel(
+      {required this.myUserId, required this.onOpenConversation});
 
   @override
   State<_FriendsMainPanel> createState() => _FriendsMainPanelState();
@@ -1718,7 +1905,8 @@ class _FriendsMainPanelState extends State<_FriendsMainPanel> {
   }
 
   void _refresh() {
-    setState(() => _friendsFuture = FriendService.fetchAcceptedFriends(widget.myUserId));
+    setState(() =>
+        _friendsFuture = FriendService.fetchAcceptedFriends(widget.myUserId));
   }
 
   @override
@@ -1731,20 +1919,25 @@ class _FriendsMainPanelState extends State<_FriendsMainPanel> {
           Container(
             height: 48,
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _C.divider))),
+            decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: _C.divider))),
             child: Row(
               children: [
-                const Icon(Icons.people_alt_rounded, color: _C.textMuted, size: 20),
+                const Icon(Icons.people_alt_rounded,
+                    color: _C.textMuted, size: 20),
                 const SizedBox(width: 8),
                 const Text('Amigos',
                     style: TextStyle(
-                        color: _C.textHeader, fontWeight: FontWeight.bold, fontSize: 16)),
+                        color: _C.textHeader,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16)),
                 const Spacer(),
                 ElevatedButton.icon(
                   onPressed: () async {
                     await showDialog(
                       context: context,
-                      builder: (_) => _AddFriendDialog(myUserId: widget.myUserId),
+                      builder: (_) =>
+                          _AddFriendDialog(myUserId: widget.myUserId),
                     );
                     _refresh();
                   },
@@ -1760,7 +1953,8 @@ class _FriendsMainPanelState extends State<_FriendsMainPanel> {
               future: _friendsFuture,
               builder: (context, snapshot) {
                 if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator(color: _C.blurple));
+                  return const Center(
+                      child: CircularProgressIndicator(color: _C.blurple));
                 }
                 final friends = snapshot.data!;
                 if (friends.isEmpty) {
@@ -1770,29 +1964,36 @@ class _FriendsMainPanelState extends State<_FriendsMainPanel> {
                   );
                 }
                 return ListView.separated(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   itemCount: friends.length,
-                  separatorBuilder: (_, __) => const Divider(color: _C.divider, height: 1),
+                  separatorBuilder: (_, __) =>
+                      const Divider(color: _C.divider, height: 1),
                   itemBuilder: (context, index) {
                     final friend = friends[index];
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: CircleAvatar(
                         backgroundColor: _C.blurple,
-                        backgroundImage:
-                            friend.avatarUrl != null ? NetworkImage(friend.avatarUrl!) : null,
+                        backgroundImage: friend.avatarUrl != null
+                            ? NetworkImage(friend.avatarUrl!)
+                            : null,
                         child: friend.avatarUrl == null
                             ? Text(friend.displayName[0].toUpperCase(),
                                 style: const TextStyle(color: Colors.white))
                             : null,
                       ),
                       title: Text(friend.displayName,
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600)),
                       subtitle: Text('@${friend.username}',
-                          style: const TextStyle(color: _C.textMuted, fontSize: 12)),
+                          style: const TextStyle(
+                              color: _C.textMuted, fontSize: 12)),
                       trailing: IconButton(
                         tooltip: 'Enviar mensagem',
-                        icon: const Icon(Icons.chat_bubble_outline_rounded, color: _C.textMuted),
+                        icon: const Icon(Icons.chat_bubble_outline_rounded,
+                            color: _C.textMuted),
                         onPressed: () => widget.onOpenConversation(friend),
                       ),
                     );
@@ -1816,14 +2017,18 @@ class _DmChatArea extends StatelessWidget {
   final TextEditingController controller;
   final ScrollController scrollController;
   final VoidCallback onSend;
+  final Future<void> Function(XFile) onSendMedia;
   final String myUserId;
+  final Future<void> Function() onPublicServerJoined;
 
   const _DmChatArea({
     required this.conversation,
     required this.controller,
     required this.scrollController,
     required this.onSend,
+    required this.onSendMedia,
     required this.myUserId,
+    required this.onPublicServerJoined,
   });
 
   @override
@@ -1835,7 +2040,8 @@ class _DmChatArea extends StatelessWidget {
           Container(
             height: 48,
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _C.divider))),
+            decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: _C.divider))),
             child: Row(
               children: [
                 CircleAvatar(
@@ -1845,14 +2051,18 @@ class _DmChatArea extends StatelessWidget {
                       ? NetworkImage(conversation.otherUser.avatarUrl!)
                       : null,
                   child: conversation.otherUser.avatarUrl == null
-                      ? Text(conversation.otherUser.displayName[0].toUpperCase(),
-                          style: const TextStyle(color: Colors.white, fontSize: 12))
+                      ? Text(
+                          conversation.otherUser.displayName[0].toUpperCase(),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 12))
                       : null,
                 ),
                 const SizedBox(width: 8),
                 Text(conversation.otherUser.displayName,
                     style: const TextStyle(
-                        color: _C.textHeader, fontWeight: FontWeight.bold, fontSize: 16)),
+                        color: _C.textHeader,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16)),
               ],
             ),
           ),
@@ -1861,11 +2071,13 @@ class _DmChatArea extends StatelessWidget {
               conversationId: conversation.id,
               scrollController: scrollController,
               myUserId: myUserId,
+              onPublicServerJoined: onPublicServerJoined,
             ),
           ),
           _MessageInputBar(
             controller: controller,
             onSend: onSend,
+            onSendMedia: onSendMedia,
             channelName: '@${conversation.otherUser.username}',
           ),
         ],
@@ -1878,26 +2090,49 @@ class _DmMessagesList extends StatelessWidget {
   final String conversationId;
   final ScrollController scrollController;
   final String myUserId;
+  final Future<void> Function() onPublicServerJoined;
 
   const _DmMessagesList({
     required this.conversationId,
     required this.scrollController,
     required this.myUserId,
+    required this.onPublicServerJoined,
   });
 
   /// Se a mensagem for um convite de chamada de voz (ver
   /// kVoiceInvitePrefix em voice_call_screen.dart), mostra um cartão
   /// clicável em vez do texto cru.
-  Widget _buildMessageContent(BuildContext context, String content) {
-    final invite = parseVoiceInviteMessage(content);
+  Widget _buildMessageContent(
+      BuildContext context, DirectMessageModel message) {
+    final invite = parseVoiceInviteMessage(message.content);
     if (invite == null) {
-      return Text(content,
-          style: const TextStyle(color: _C.textNormal, fontSize: 15, height: 1.35));
+      return Text(message.content,
+          style: const TextStyle(
+              color: _C.textNormal, fontSize: 15, height: 1.35));
     }
+
     return _VoiceInviteCard(
       roomId: invite.roomId,
       channelName: invite.channelName,
+      expiresAt:
+          message.expiresAt ?? message.createdAt.add(kVoiceInviteLifetime),
       myUserId: myUserId,
+      onPublicServerJoined: onPublicServerJoined,
+    );
+  }
+
+  Widget _buildMessageBody(BuildContext context, DirectMessageModel message) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (message.mediaPath != null)
+          _ChatMediaPreview(
+            mediaType: message.mediaType,
+            mediaUrl: message.mediaUrl,
+            fileName: message.mediaName,
+          ),
+        if (message.content.isNotEmpty) _buildMessageContent(context, message),
+      ],
     );
   }
 
@@ -1907,7 +2142,8 @@ class _DmMessagesList extends StatelessWidget {
       stream: DmService.watchConversation(conversationId),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator(color: _C.blurple));
+          return const Center(
+              child: CircularProgressIndicator(color: _C.blurple));
         }
         final messages = snapshot.data!;
 
@@ -1935,15 +2171,9 @@ class _DmMessagesList extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundColor: _C.blurple,
-                    child: Text(
-                      message.senderUsername.isNotEmpty
-                          ? message.senderUsername[0].toUpperCase()
-                          : '?',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
+                  _ChatAvatar(
+                    displayName: message.senderDisplayName,
+                    avatarUrl: message.senderAvatarUrl,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -1952,18 +2182,19 @@ class _DmMessagesList extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            Text(message.senderUsername,
+                            Text(message.senderDisplayName,
                                 style: const TextStyle(
                                     color: _C.textHeader,
                                     fontWeight: FontWeight.w600,
                                     fontSize: 15)),
                             const SizedBox(width: 8),
                             Text(DateFormat('HH:mm').format(message.createdAt),
-                                style: const TextStyle(color: _C.textMuted, fontSize: 11.5)),
+                                style: const TextStyle(
+                                    color: _C.textMuted, fontSize: 11.5)),
                           ],
                         ),
                         const SizedBox(height: 2),
-                        _buildMessageContent(context, message.content),
+                        _buildMessageBody(context, message),
                       ],
                     ),
                   ),
@@ -1980,41 +2211,138 @@ class _DmMessagesList extends StatelessWidget {
 /// Cartão clicável mostrado no lugar de uma mensagem de texto normal
 /// quando ela é um convite de chamada de voz. Tocar nele já entra
 /// direto na chamada, sem precisar navegar até o servidor/canal.
-class _VoiceInviteCard extends StatelessWidget {
+class _VoiceInviteCard extends StatefulWidget {
   final String roomId;
   final String channelName;
+  final DateTime expiresAt;
   final String myUserId;
+  final Future<void> Function() onPublicServerJoined;
 
   const _VoiceInviteCard({
     required this.roomId,
     required this.channelName,
+    required this.expiresAt,
     required this.myUserId,
+    required this.onPublicServerJoined,
   });
 
+  @override
+  State<_VoiceInviteCard> createState() => _VoiceInviteCardState();
+}
+
+class _VoiceInviteCardState extends State<_VoiceInviteCard> {
+  Timer? _expiryTimer;
+  bool _expired = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleExpiry();
+  }
+
+  @override
+  void didUpdateWidget(covariant _VoiceInviteCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.expiresAt != oldWidget.expiresAt) _scheduleExpiry();
+  }
+
+  void _scheduleExpiry() {
+    _expiryTimer?.cancel();
+    final remaining = widget.expiresAt.difference(DateTime.now());
+    if (remaining <= Duration.zero) {
+      _expired = true;
+      return;
+    }
+    _expired = false;
+    _expiryTimer = Timer(remaining, () {
+      if (mounted) setState(() => _expired = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _expiryTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> _join(BuildContext context) async {
+    if (_expired) return;
+    final serverId = serverIdFromVoiceRoomId(widget.roomId);
+    var joinedServer = false;
+    String? membershipNotice;
+    if (serverId != null && serverId != kBuiltInServerId) {
+      try {
+        joinedServer = await ServerService.joinPublicServerFromVoiceInvite(
+          serverId: serverId,
+          userId: widget.myUserId,
+        );
+        if (!joinedServer) {
+          membershipNotice =
+              'Este servidor é privado. Peça um convite do servidor para ele aparecer na sua lista.';
+        }
+      } on PostgrestException catch (error) {
+        membershipNotice =
+            'Não foi possível adicionar você ao servidor: ${error.message}';
+      }
+    }
+
     Profile? profile;
+    String? profileNotice;
     try {
-      profile = await ProfileService.fetchProfile(myUserId);
-    } catch (_) {
-      // segue com nome genérico se o perfil não resolver
+      profile = await ProfileService.fetchProfile(widget.myUserId);
+    } catch (error) {
+      profileNotice = 'Não foi possível carregar seu perfil na chamada: $error';
     }
     if (!context.mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => VoiceCallScreen(
-          channelName: channelName,
-          roomId: roomId,
-          myUserId: myUserId,
+    await Navigator.of(context).push<void>(
+      buildVoiceCallRoute(
+        VoiceCallScreen(
+          channelName: widget.channelName,
+          roomId: widget.roomId,
+          myUserId: widget.myUserId,
           myDisplayName: profile?.displayName ?? 'Você',
           myAvatarUrl: profile?.avatarUrl,
         ),
-        fullscreenDialog: true,
       ),
     );
+    if (!context.mounted) return;
+    if (joinedServer) {
+      await widget.onPublicServerJoined();
+      if (!context.mounted) return;
+    }
+    final notices = [
+      if (membershipNotice != null) membershipNotice,
+      if (profileNotice != null) profileNotice,
+    ];
+    if (notices.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(notices.join('\n'))),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_expired) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: _C.inputBg,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.timer_off_rounded, color: _C.textMuted),
+            SizedBox(width: 10),
+            Text(
+              'Convite para chamada expirado',
+              style: TextStyle(color: _C.textMuted, fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+
     return InkWell(
       borderRadius: BorderRadius.circular(8),
       onTap: () => _join(context),
@@ -2034,9 +2362,13 @@ class _VoiceInviteCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('Convite para chamada de voz',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
-                  Text(channelName,
-                      style: const TextStyle(color: _C.textMuted, fontSize: 12)),
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13)),
+                  Text(widget.channelName,
+                      style:
+                          const TextStyle(color: _C.textMuted, fontSize: 12)),
                 ],
               ),
             ),
@@ -2057,9 +2389,11 @@ class _VoiceInviteCard extends StatelessWidget {
 // =========================================================================
 class _ChatArea extends StatelessWidget {
   final String channelName;
+  final String displayName;
   final TextEditingController controller;
   final ScrollController scrollController;
   final VoidCallback onSend;
+  final Future<void> Function(XFile) onSendMedia;
   final VoidCallback onToggleMembers;
   final bool membersPanelOpen;
   final String myUserId;
@@ -2067,9 +2401,11 @@ class _ChatArea extends StatelessWidget {
 
   const _ChatArea({
     required this.channelName,
+    required this.displayName,
     required this.controller,
     required this.scrollController,
     required this.onSend,
+    required this.onSendMedia,
     required this.onToggleMembers,
     required this.membersPanelOpen,
     required this.myUserId,
@@ -2093,21 +2429,25 @@ class _ChatArea extends StatelessWidget {
                 const Icon(Icons.tag_rounded, color: _C.textMuted, size: 22),
                 const SizedBox(width: 6),
                 Expanded(
-                  child: Text(channelName,
+                  child: Text(displayName,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                          color: _C.textHeader, fontWeight: FontWeight.bold, fontSize: 16)),
+                          color: _C.textHeader,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16)),
                 ),
                 IconButton(
                   tooltip: 'Adicionar amigo',
-                  icon: const Icon(Icons.person_add_alt_1_rounded, color: _C.textMuted),
+                  icon: const Icon(Icons.person_add_alt_1_rounded,
+                      color: _C.textMuted),
                   onPressed: () => showDialog(
                     context: context,
                     builder: (_) => _AddFriendDialog(myUserId: myUserId),
                   ),
                 ),
                 IconButton(
-                  tooltip: membersPanelOpen ? 'Ocultar membros' : 'Mostrar membros',
+                  tooltip:
+                      membersPanelOpen ? 'Ocultar membros' : 'Mostrar membros',
                   icon: Icon(Icons.group_rounded,
                       color: membersPanelOpen ? Colors.white : _C.textMuted),
                   onPressed: onToggleMembers,
@@ -2123,7 +2463,12 @@ class _ChatArea extends StatelessWidget {
               serverId: serverId,
             ),
           ),
-          _MessageInputBar(controller: controller, onSend: onSend, channelName: channelName),
+          _MessageInputBar(
+            controller: controller,
+            onSend: onSend,
+            onSendMedia: onSendMedia,
+            channelName: displayName,
+          ),
         ],
       ),
     );
@@ -2193,14 +2538,17 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
       if (!mounted) return;
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Pedido de amizade enviado para @${profile.username}!')),
+        SnackBar(
+            content:
+                Text('Pedido de amizade enviado para @${profile.username}!')),
       );
     } catch (e) {
       setState(() {
         _isSubmitting = false;
         // A constraint UNIQUE(sender_id, receiver_id) do banco cai aqui
         // quando um pedido para esse usuário já existe.
-        _errorMessage = 'Não foi possível enviar o pedido (talvez já exista um pendente).';
+        _errorMessage =
+            'Não foi possível enviar o pedido (talvez já exista um pendente).';
       });
     }
   }
@@ -2217,7 +2565,10 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text('Adicionar amigo',
-                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
             TextField(
               controller: _usernameController,
@@ -2238,19 +2589,24 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
             if (_errorMessage != null) ...[
               const SizedBox(height: 8),
               Text(_errorMessage!,
-                  style: const TextStyle(color: Color(0xFFFF8B8B), fontSize: 13)),
+                  style:
+                      const TextStyle(color: Color(0xFFFF8B8B), fontSize: 13)),
             ],
             const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
+                    onPressed: _isSubmitting
+                        ? null
+                        : () => Navigator.of(context).pop(),
                     style: OutlinedButton.styleFrom(
                       side: const BorderSide(color: _C.textMuted),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4)),
                     ),
-                    child: const Text('Cancelar', style: TextStyle(color: Colors.white)),
+                    child: const Text('Cancelar',
+                        style: TextStyle(color: Colors.white)),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -2259,13 +2615,15 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
                     onPressed: _isSubmitting ? null : _handleAddFriend,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _C.blurple,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4)),
                     ),
                     child: _isSubmitting
                         ? const SizedBox(
                             width: 18,
                             height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
                           )
                         : const Text('Adicionar amigo'),
                   ),
@@ -2306,7 +2664,8 @@ class _MessagesList extends StatelessWidget {
           );
         }
         if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator(color: _C.blurple));
+          return const Center(
+              child: CircularProgressIndicator(color: _C.blurple));
         }
 
         final messages = snapshot.data!;
@@ -2355,6 +2714,26 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
+  Widget _buildMessageBody() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (message.mediaPath != null)
+          _ChatMediaPreview(
+            mediaType: message.mediaType,
+            mediaUrl: message.mediaUrl,
+            fileName: message.mediaName,
+          ),
+        if (message.content.isNotEmpty)
+          Text(
+            message.content,
+            style: const TextStyle(
+                color: _C.textNormal, fontSize: 15, height: 1.35),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -2366,15 +2745,9 @@ class _MessageBubble extends StatelessWidget {
           // (o próprio, se for você; o de outra pessoa, caso contrário).
           GestureDetector(
             onTap: () => _openProfile(context),
-            child: CircleAvatar(
-              radius: 20,
-              backgroundColor: _C.blurple,
-              child: Text(
-                message.senderUsername.isNotEmpty
-                    ? message.senderUsername[0].toUpperCase()
-                    : '?',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-              ),
+            child: _ChatAvatar(
+              displayName: message.senderDisplayName,
+              avatarUrl: message.senderAvatarUrl,
             ),
           ),
           const SizedBox(width: 12),
@@ -2386,18 +2759,20 @@ class _MessageBubble extends StatelessWidget {
                   children: [
                     GestureDetector(
                       onTap: () => _openProfile(context),
-                      child: Text(message.senderUsername,
+                      child: Text(message.senderDisplayName,
                           style: const TextStyle(
-                              color: _C.textHeader, fontWeight: FontWeight.w600, fontSize: 15)),
+                              color: _C.textHeader,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15)),
                     ),
                     const SizedBox(width: 8),
                     Text(_formatTime(message.createdAt),
-                        style: const TextStyle(color: _C.textMuted, fontSize: 11.5)),
+                        style: const TextStyle(
+                            color: _C.textMuted, fontSize: 11.5)),
                   ],
                 ),
                 const SizedBox(height: 2),
-                Text(message.content,
-                    style: const TextStyle(color: _C.textNormal, fontSize: 15, height: 1.35)),
+                _buildMessageBody(),
               ],
             ),
           ),
@@ -2407,42 +2782,290 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-class _MessageInputBar extends StatelessWidget {
+class _ChatMediaPreview extends StatelessWidget {
+  final String? mediaType;
+  final String? mediaUrl;
+  final String? fileName;
+
+  const _ChatMediaPreview({
+    required this.mediaType,
+    required this.mediaUrl,
+    required this.fileName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (mediaUrl == null || mediaUrl!.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(
+          'Mídia indisponível ou expirada${fileName == null ? '' : ': $fileName'}',
+          style: const TextStyle(color: _C.textMuted, fontSize: 13),
+        ),
+      );
+    }
+
+    if (mediaType == 'image') {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.network(
+            mediaUrl!,
+            width: 420,
+            height: 320,
+            fit: BoxFit.contain,
+            alignment: Alignment.centerLeft,
+            loadingBuilder: (context, child, progress) => progress == null
+                ? child
+                : const SizedBox(
+                    width: 240,
+                    height: 160,
+                    child: Center(
+                      child: CircularProgressIndicator(color: _C.blurple),
+                    ),
+                  ),
+            errorBuilder: (context, error, stackTrace) => const Text(
+              'Não foi possível carregar esta imagem.',
+              style: TextStyle(color: _C.textMuted),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (mediaType == 'video') {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: _ChatVideoPlayer(url: mediaUrl!),
+      );
+    }
+
+    return Text(
+      fileName ?? 'Anexo',
+      style: const TextStyle(color: _C.textMuted, fontSize: 13),
+    );
+  }
+}
+
+class _ChatVideoPlayer extends StatefulWidget {
+  final String url;
+  const _ChatVideoPlayer({required this.url});
+
+  @override
+  State<_ChatVideoPlayer> createState() => _ChatVideoPlayerState();
+}
+
+class _ChatVideoPlayerState extends State<_ChatVideoPlayer> {
+  late final VideoPlayerController _controller;
+  late final Future<void> _initializeFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _initializeFuture = _controller.initialize();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<void>(
+      future: _initializeFuture,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return const Text(
+            'Não foi possível reproduzir este vídeo.',
+            style: TextStyle(color: _C.textMuted),
+          );
+        }
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const SizedBox(
+            width: 280,
+            height: 160,
+            child: Center(
+              child: CircularProgressIndicator(color: _C.blurple),
+            ),
+          );
+        }
+
+        final aspectRatio = _controller.value.aspectRatio > 0
+            ? _controller.value.aspectRatio
+            : 16 / 9;
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420, maxHeight: 320),
+          child: AspectRatio(
+            aspectRatio: aspectRatio,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: ColoredBox(
+                color: Colors.black,
+                child: Stack(
+                  alignment: Alignment.bottomCenter,
+                  children: [
+                    Center(child: VideoPlayer(_controller)),
+                    Container(
+                      color: Colors.black54,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        children: [
+                          ValueListenableBuilder<VideoPlayerValue>(
+                            valueListenable: _controller,
+                            builder: (context, value, child) => IconButton(
+                              onPressed: value.isPlaying
+                                  ? _controller.pause
+                                  : _controller.play,
+                              icon: Icon(
+                                value.isPlaying
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: VideoProgressIndicator(
+                              _controller,
+                              allowScrubbing: true,
+                              colors: const VideoProgressColors(
+                                playedColor: _C.blurple,
+                                bufferedColor: _C.textMuted,
+                                backgroundColor: Colors.white24,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MessageInputBar extends StatefulWidget {
   final TextEditingController controller;
   final VoidCallback onSend;
+  final Future<void> Function(XFile) onSendMedia;
   final String channelName;
 
-  const _MessageInputBar({required this.controller, required this.onSend, required this.channelName});
+  const _MessageInputBar(
+      {required this.controller,
+      required this.onSend,
+      required this.onSendMedia,
+      required this.channelName});
+
+  @override
+  State<_MessageInputBar> createState() => _MessageInputBarState();
+}
+
+class _MessageInputBarState extends State<_MessageInputBar> {
+  bool _sendingMedia = false;
+
+  Future<void> _pickAndSendMedia() async {
+    final selectedType = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: _C.darker,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.image_rounded, color: _C.blurple),
+              title: const Text('Enviar foto (até 5 MB)'),
+              onTap: () => Navigator.pop(context, 'image'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam_rounded, color: _C.blurple),
+              title: const Text('Enviar vídeo (até 20 MB)'),
+              onTap: () => Navigator.pop(context, 'video'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selectedType == null || !mounted) return;
+
+    setState(() => _sendingMedia = true);
+    try {
+      final picker = ImagePicker();
+      final file = selectedType == 'image'
+          ? await picker.pickImage(
+              source: ImageSource.gallery,
+              maxWidth: 1920,
+              maxHeight: 1920,
+              imageQuality: 85,
+            )
+          : await picker.pickVideo(source: ImageSource.gallery);
+      if (file != null) {
+        await widget.onSendMedia(file);
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Não foi possível enviar a mídia: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sendingMedia = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
       child: Container(
-        decoration: BoxDecoration(color: _C.inputBg, borderRadius: BorderRadius.circular(12)),
+        decoration: BoxDecoration(
+            color: _C.inputBg, borderRadius: BorderRadius.circular(12)),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: Row(
           children: [
+            IconButton(
+              tooltip: 'Enviar foto ou vídeo',
+              onPressed: _sendingMedia ? null : _pickAndSendMedia,
+              icon: _sendingMedia
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _C.blurple,
+                      ),
+                    )
+                  : const Icon(Icons.add_circle_outline_rounded,
+                      color: _C.textMuted),
+            ),
             Expanded(
               child: TextField(
-                controller: controller,
+                controller: widget.controller,
                 style: const TextStyle(color: _C.textNormal, fontSize: 15),
                 cursorColor: Colors.white,
                 decoration: InputDecoration(
-                  hintText: 'Conversar em #$channelName',
+                  hintText: 'Conversar em #${widget.channelName}',
                   hintStyle: const TextStyle(color: _C.textMuted),
                   border: InputBorder.none,
                   isCollapsed: true,
                   contentPadding: const EdgeInsets.symmetric(vertical: 12),
                 ),
-                onSubmitted: (_) => onSend(),
+                onSubmitted: (_) => widget.onSend(),
                 textInputAction: TextInputAction.send,
               ),
             ),
             IconButton(
               tooltip: 'Enviar mensagem',
               icon: const Icon(Icons.send_rounded, color: _C.blurple),
-              onPressed: onSend,
+              onPressed: widget.onSend,
             ),
           ],
         ),
@@ -2456,17 +3079,21 @@ class _MessageInputBar extends StatelessWidget {
 // =========================================================================
 class _MobileChatScreen extends StatelessWidget {
   final String channelName;
+  final String displayName;
   final TextEditingController controller;
   final ScrollController scrollController;
   final VoidCallback onSend;
+  final Future<void> Function(XFile) onSendMedia;
   final String myUserId;
   final String serverId;
 
   const _MobileChatScreen({
     required this.channelName,
+    required this.displayName,
     required this.controller,
     required this.scrollController,
     required this.onSend,
+    required this.onSendMedia,
     required this.myUserId,
     required this.serverId,
   });
@@ -2478,13 +3105,17 @@ class _MobileChatScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: _C.chatBg,
         elevation: 0,
-        title: Text('# $channelName',
+        title: Text('# $displayName',
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _C.textHeader, fontWeight: FontWeight.bold, fontSize: 16)),
+            style: const TextStyle(
+                color: _C.textHeader,
+                fontWeight: FontWeight.bold,
+                fontSize: 16)),
         actions: [
           IconButton(
             tooltip: 'Adicionar amigo',
-            icon: const Icon(Icons.person_add_alt_1_rounded, color: _C.textMuted),
+            icon:
+                const Icon(Icons.person_add_alt_1_rounded, color: _C.textMuted),
             onPressed: () => showDialog(
               context: context,
               builder: (_) => _AddFriendDialog(myUserId: myUserId),
@@ -2502,7 +3133,12 @@ class _MobileChatScreen extends StatelessWidget {
               serverId: serverId,
             ),
           ),
-          _MessageInputBar(controller: controller, onSend: onSend, channelName: channelName),
+          _MessageInputBar(
+            controller: controller,
+            onSend: onSend,
+            onSendMedia: onSendMedia,
+            channelName: displayName,
+          ),
         ],
       ),
     );
@@ -2517,7 +3153,11 @@ class _MobileChatScreen extends StatelessWidget {
 // qualquer amigo ou conversa abre o chat em tela cheia (_MobileDmChatScreen).
 class _MobileFriendsScreen extends StatefulWidget {
   final String myUserId;
-  const _MobileFriendsScreen({required this.myUserId});
+  final Future<void> Function() onPublicServerJoined;
+  const _MobileFriendsScreen({
+    required this.myUserId,
+    required this.onPublicServerJoined,
+  });
 
   @override
   State<_MobileFriendsScreen> createState() => _MobileFriendsScreenState();
@@ -2550,6 +3190,7 @@ class _MobileFriendsScreenState extends State<_MobileFriendsScreen> {
           conversationId: conversationId,
           otherUser: friend,
           myUserId: widget.myUserId,
+          onPublicServerJoined: widget.onPublicServerJoined,
         ),
       ),
     );
@@ -2563,6 +3204,7 @@ class _MobileFriendsScreenState extends State<_MobileFriendsScreen> {
           conversationId: conversation.id,
           otherUser: conversation.otherUser,
           myUserId: widget.myUserId,
+          onPublicServerJoined: widget.onPublicServerJoined,
         ),
       ),
     );
@@ -2577,11 +3219,13 @@ class _MobileFriendsScreenState extends State<_MobileFriendsScreen> {
         backgroundColor: _C.chatBg,
         elevation: 0,
         title: const Text('Amigos',
-            style: TextStyle(color: _C.textHeader, fontWeight: FontWeight.bold)),
+            style:
+                TextStyle(color: _C.textHeader, fontWeight: FontWeight.bold)),
         actions: [
           IconButton(
             tooltip: 'Adicionar amigo',
-            icon: const Icon(Icons.person_add_alt_1_rounded, color: _C.textMuted),
+            icon:
+                const Icon(Icons.person_add_alt_1_rounded, color: _C.textMuted),
             onPressed: () async {
               await showDialog(
                 context: context,
@@ -2597,7 +3241,10 @@ class _MobileFriendsScreenState extends State<_MobileFriendsScreen> {
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
             child: Text('AMIGOS',
-                style: TextStyle(color: _C.textMuted, fontSize: 12, fontWeight: FontWeight.w700)),
+                style: TextStyle(
+                    color: _C.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)),
           ),
           FutureBuilder<List<Profile>>(
             future: _friendsFuture,
@@ -2605,14 +3252,16 @@ class _MobileFriendsScreenState extends State<_MobileFriendsScreen> {
               if (!snapshot.hasData) {
                 return const Padding(
                   padding: EdgeInsets.all(16),
-                  child: Center(child: CircularProgressIndicator(color: _C.blurple)),
+                  child: Center(
+                      child: CircularProgressIndicator(color: _C.blurple)),
                 );
               }
               final friends = snapshot.data!;
               if (friends.isEmpty) {
                 return const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Text('Nenhum amigo ainda.', style: TextStyle(color: _C.textMuted)),
+                  child: Text('Nenhum amigo ainda.',
+                      style: TextStyle(color: _C.textMuted)),
                 );
               }
               return Column(
@@ -2620,16 +3269,19 @@ class _MobileFriendsScreenState extends State<_MobileFriendsScreen> {
                   return ListTile(
                     leading: CircleAvatar(
                       backgroundColor: _C.blurple,
-                      backgroundImage:
-                          friend.avatarUrl != null ? NetworkImage(friend.avatarUrl!) : null,
+                      backgroundImage: friend.avatarUrl != null
+                          ? NetworkImage(friend.avatarUrl!)
+                          : null,
                       child: friend.avatarUrl == null
                           ? Text(friend.displayName[0].toUpperCase(),
                               style: const TextStyle(color: Colors.white))
                           : null,
                     ),
-                    title: Text(friend.displayName, style: const TextStyle(color: Colors.white)),
+                    title: Text(friend.displayName,
+                        style: const TextStyle(color: Colors.white)),
                     subtitle: Text('@${friend.username}',
-                        style: const TextStyle(color: _C.textMuted, fontSize: 12)),
+                        style:
+                            const TextStyle(color: _C.textMuted, fontSize: 12)),
                     onTap: () => _openConversationWith(friend),
                   );
                 }).toList(),
@@ -2639,7 +3291,10 @@ class _MobileFriendsScreenState extends State<_MobileFriendsScreen> {
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
             child: Text('CONVERSAS PRIVADAS',
-                style: TextStyle(color: _C.textMuted, fontSize: 12, fontWeight: FontWeight.w700)),
+                style: TextStyle(
+                    color: _C.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)),
           ),
           FutureBuilder<List<DmConversation>>(
             future: _conversationsFuture,
@@ -2647,14 +3302,16 @@ class _MobileFriendsScreenState extends State<_MobileFriendsScreen> {
               if (!snapshot.hasData) {
                 return const Padding(
                   padding: EdgeInsets.all(16),
-                  child: Center(child: CircularProgressIndicator(color: _C.blurple)),
+                  child: Center(
+                      child: CircularProgressIndicator(color: _C.blurple)),
                 );
               }
               final conversations = snapshot.data!;
               if (conversations.isEmpty) {
                 return const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Text('Nenhuma conversa ainda.', style: TextStyle(color: _C.textMuted)),
+                  child: Text('Nenhuma conversa ainda.',
+                      style: TextStyle(color: _C.textMuted)),
                 );
               }
               return Column(
@@ -2670,8 +3327,8 @@ class _MobileFriendsScreenState extends State<_MobileFriendsScreen> {
                               style: const TextStyle(color: Colors.white))
                           : null,
                     ),
-                    title:
-                        Text(conv.otherUser.displayName, style: const TextStyle(color: Colors.white)),
+                    title: Text(conv.otherUser.displayName,
+                        style: const TextStyle(color: Colors.white)),
                     onTap: () => _openConversation(conv),
                   );
                 }).toList(),
@@ -2691,11 +3348,13 @@ class _MobileDmChatScreen extends StatefulWidget {
   final String conversationId;
   final Profile otherUser;
   final String myUserId;
+  final Future<void> Function() onPublicServerJoined;
 
   const _MobileDmChatScreen({
     required this.conversationId,
     required this.otherUser,
     required this.myUserId,
+    required this.onPublicServerJoined,
   });
 
   @override
@@ -2725,10 +3384,24 @@ class _MobileDmChatScreenState extends State<_MobileDmChatScreen> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erro ao enviar mensagem: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao enviar mensagem: $e')));
       }
     }
+  }
+
+  Future<void> _sendMedia(XFile file) async {
+    final attachment = await ChatMediaService.upload(
+      userId: widget.myUserId,
+      file: file,
+    );
+    await DmService.sendMessage(
+      conversationId: widget.conversationId,
+      senderId: widget.myUserId,
+      content: _controller.text,
+      attachment: attachment,
+    );
+    _controller.clear();
   }
 
   @override
@@ -2739,7 +3412,10 @@ class _MobileDmChatScreenState extends State<_MobileDmChatScreen> {
         backgroundColor: _C.chatBg,
         elevation: 0,
         title: Text(widget.otherUser.displayName,
-            style: const TextStyle(color: _C.textHeader, fontWeight: FontWeight.bold, fontSize: 16)),
+            style: const TextStyle(
+                color: _C.textHeader,
+                fontWeight: FontWeight.bold,
+                fontSize: 16)),
       ),
       body: Column(
         children: [
@@ -2748,11 +3424,13 @@ class _MobileDmChatScreenState extends State<_MobileDmChatScreen> {
               conversationId: widget.conversationId,
               scrollController: _scrollController,
               myUserId: widget.myUserId,
+              onPublicServerJoined: widget.onPublicServerJoined,
             ),
           ),
           _MessageInputBar(
             controller: _controller,
             onSend: _send,
+            onSendMedia: _sendMedia,
             channelName: '@${widget.otherUser.username}',
           ),
         ],

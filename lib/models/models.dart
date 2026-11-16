@@ -28,7 +28,8 @@ class Profile {
     return Profile(
       id: map['id'] as String,
       username: map['username'] as String,
-      displayName: (map['display_name'] as String?) ?? map['username'] as String,
+      displayName:
+          (map['display_name'] as String?) ?? map['username'] as String,
       avatarUrl: map['avatar_url'] as String?,
       statusMessage:
           (map['status_message'] as String?) ?? 'O que você tem ouvido?',
@@ -71,7 +72,8 @@ class FriendRequestModel {
   final String receiverId;
   final String status; // 'pending' | 'accepted' | 'rejected'
   final DateTime createdAt;
-  final Profile otherUser; // quem enviou (se eu sou o destinatário) ou quem recebeu
+  final Profile
+      otherUser; // quem enviou (se eu sou o destinatário) ou quem recebeu
 
   const FriendRequestModel({
     required this.id,
@@ -97,35 +99,61 @@ class FriendRequestModel {
   }
 }
 
-/// Espelha a tabela `messages`, já com o `username`/`display_name` do
-/// remetente resolvido via join, para não precisar de outra consulta.
+String _profileDisplayName(Map<String, dynamic>? profile) {
+  final displayName = (profile?['display_name'] as String?)?.trim();
+  if (displayName != null && displayName.isNotEmpty) return displayName;
+
+  final username = (profile?['username'] as String?)?.trim();
+  if (username != null && username.isNotEmpty) return username;
+  return 'desconhecido';
+}
+
+String? _profileAvatarUrl(Map<String, dynamic>? profile) {
+  final avatarUrl = (profile?['avatar_url'] as String?)?.trim();
+  return avatarUrl == null || avatarUrl.isEmpty ? null : avatarUrl;
+}
+
+/// Espelha a tabela `messages`, já com o nome de exibição atual do remetente.
 class MessageModel {
   final String id;
   final String channel;
   final String senderId;
-  final String senderUsername;
+  final String senderDisplayName;
+  final String? senderAvatarUrl;
   final String content;
+  final String? mediaPath;
+  final String? mediaType;
+  final String? mediaName;
+  final String? mediaUrl;
   final DateTime createdAt;
 
   const MessageModel({
     required this.id,
     required this.channel,
     required this.senderId,
-    required this.senderUsername,
+    required this.senderDisplayName,
+    this.senderAvatarUrl,
     required this.content,
+    this.mediaPath,
+    this.mediaType,
+    this.mediaName,
+    this.mediaUrl,
     required this.createdAt,
   });
 
   factory MessageModel.fromMap(Map<String, dynamic> map) {
-    // Quando a consulta usa `.select('*, profiles(username)')`, o Supabase
-    // devolve o relacionamento aninhado em `map['profiles']`.
     final profileMap = map['profiles'] as Map<String, dynamic>?;
     return MessageModel(
       id: map['id'] as String,
       channel: map['channel'] as String,
       senderId: map['sender_id'] as String,
-      senderUsername: profileMap?['username'] as String? ?? 'desconhecido',
-      content: map['content'] as String,
+      senderDisplayName: _profileDisplayName(profileMap),
+      senderAvatarUrl: _profileAvatarUrl(profileMap),
+      content: map['content'] as String? ?? '',
+      mediaPath: map['media_path'] as String?,
+      mediaType: map['media_type'] as String?,
+      mediaName: map['media_name'] as String?,
+      mediaUrl: map['media_url'] as String?,
       createdAt: DateTime.parse(map['created_at'] as String).toLocal(),
     );
   }
@@ -150,17 +178,29 @@ class DirectMessageModel {
   final String id;
   final String conversationId;
   final String senderId;
-  final String senderUsername;
+  final String senderDisplayName;
+  final String? senderAvatarUrl;
   final String content;
+  final String? mediaPath;
+  final String? mediaType;
+  final String? mediaName;
+  final String? mediaUrl;
   final DateTime createdAt;
+  final DateTime? expiresAt;
 
   const DirectMessageModel({
     required this.id,
     required this.conversationId,
     required this.senderId,
-    required this.senderUsername,
+    required this.senderDisplayName,
+    this.senderAvatarUrl,
     required this.content,
+    this.mediaPath,
+    this.mediaType,
+    this.mediaName,
+    this.mediaUrl,
     required this.createdAt,
+    this.expiresAt,
   });
 
   factory DirectMessageModel.fromMap(Map<String, dynamic> map) {
@@ -169,9 +209,17 @@ class DirectMessageModel {
       id: map['id'] as String,
       conversationId: map['conversation_id'] as String,
       senderId: map['sender_id'] as String,
-      senderUsername: profileMap?['username'] as String? ?? 'desconhecido',
-      content: map['content'] as String,
+      senderDisplayName: _profileDisplayName(profileMap),
+      senderAvatarUrl: _profileAvatarUrl(profileMap),
+      content: map['content'] as String? ?? '',
+      mediaPath: map['media_path'] as String?,
+      mediaType: map['media_type'] as String?,
+      mediaName: map['media_name'] as String?,
+      mediaUrl: map['media_url'] as String?,
       createdAt: DateTime.parse(map['created_at'] as String).toLocal(),
+      expiresAt: map['expires_at'] == null
+          ? null
+          : DateTime.parse(map['expires_at'] as String).toLocal(),
     );
   }
 }

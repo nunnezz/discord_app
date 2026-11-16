@@ -1,4 +1,5 @@
 import '../models/models.dart';
+import 'chat_media_service.dart';
 import 'supabase_client.dart';
 
 // =========================================================================
@@ -13,15 +14,26 @@ class ChatService {
     required String channel,
     required String senderId,
     required String content,
+    ChatMediaAttachment? attachment,
     String serverId = 'default',
   }) async {
-    if (content.trim().isEmpty) return;
-    await supabase.from('messages').insert({
-      'channel': channel,
-      'server_id': serverId,
-      'sender_id': senderId,
-      'content': content.trim(),
-    });
+    if (content.trim().isEmpty && attachment == null) return;
+    try {
+      await supabase.from('messages').insert({
+        'channel': channel,
+        'server_id': serverId,
+        'sender_id': senderId,
+        'content': content.trim(),
+        'media_path': attachment?.path,
+        'media_type': attachment?.type,
+        'media_name': attachment?.fileName,
+      });
+    } catch (_) {
+      if (attachment != null) {
+        await ChatMediaService.remove(attachment.path);
+      }
+      rethrow;
+    }
   }
 
   /// Stream em tempo real das mensagens de um canal, já ordenadas por
@@ -31,54 +43,52 @@ class ChatService {
   /// IMPORTANTE: o `.stream()` do supabase_flutter só suporta UM filtro
   /// `.eq()` no lado do servidor — por isso filtramos por `server_id`
   /// ali (é o mais seletivo entre servidores diferentes) e aplicamos o
-  /// filtro por `channel` manualmente em `_resolveSenderUsernames`, do
+  /// filtro por `channel` manualmente em `_resolveSenderDisplayNames`, do
   /// lado do cliente. Isso é necessário porque um mesmo nome de canal
   /// (ex: "geral") pode existir em servidores diferentes, e sem esse
   /// segundo filtro as mensagens de servidores distintos se misturariam.
   ///
-  /// OBS: `.stream()` também não suporta `select()` com join direto,
-  /// então resolvemos o nome de usuário do remetente com uma segunda
-  /// consulta simples — para um protótipo isso é suficiente; em
-  /// produção, considere cachear os perfis já vistos em um Map local
-  /// para não repetir consultas.
-  static Stream<List<MessageModel>> watchChannel(String channel, {String serverId = 'default'}) {
+  /// OBS: `.stream()` não suporta `select()` com join direto, então
+  /// buscamos os nomes de exibição atuais dos remetentes separadamente
+  /// sempre que o stream atualiza.
+  static Stream<List<MessageModel>> watchChannel(String channel,
+      {String serverId = 'default'}) {
     return supabase
         .from('messages')
         .stream(primaryKey: ['id'])
         .eq('server_id', serverId)
         .order('created_at')
-        .asyncMap((rows) => _resolveSenderUsernames(rows, channel));
+        .asyncMap((rows) => _resolveSenderDisplayNames(rows, channel));
   }
 
-  static final Map<String, String> _usernameCache = {};
-
-  static Future<List<MessageModel>> _resolveSenderUsernames(
+  static Future<List<MessageModel>> _resolveSenderDisplayNames(
       List<Map<String, dynamic>> allRows, String channel) async {
     // Filtro do lado do cliente: só as linhas deste canal específico
     // (ver explicação em watchChannel acima).
     final rows = allRows.where((r) => r['channel'] == channel).toList();
 
-    final missingIds = rows
-        .map((r) => r['sender_id'] as String)
-        .toSet()
-        .where((id) => !_usernameCache.containsKey(id))
-        .toList();
+    final senderIds =
+        rows.map((r) => r['sender_id'] as String).toSet().toList();
 
-    if (missingIds.isNotEmpty) {
+    final profilesById = <String, Map<String, dynamic>>{};
+    if (senderIds.isNotEmpty) {
       final profiles = await supabase
           .from('profiles')
-          .select('id, username')
-          .inFilter('id', missingIds);
+          .select('id, display_name, username, avatar_url')
+          .inFilter('id', senderIds);
       for (final p in profiles) {
-        _usernameCache[p['id'] as String] = p['username'] as String;
+        profilesById[p['id'] as String] = p;
       }
     }
 
+    final mediaUrls = await ChatMediaService.createSignedUrls(
+      rows.map((row) => row['media_path'] as String?),
+    );
+
     return rows.map((row) {
       final enrichedRow = Map<String, dynamic>.from(row);
-      enrichedRow['profiles'] = {
-        'username': _usernameCache[row['sender_id']] ?? 'desconhecido',
-      };
+      enrichedRow['profiles'] = profilesById[row['sender_id'] as String];
+      enrichedRow['media_url'] = mediaUrls[row['media_path']];
       return MessageModel.fromMap(enrichedRow);
     }).toList()
       // Reordena explicitamente no Dart: o `.order('created_at')` do

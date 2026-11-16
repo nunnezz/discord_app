@@ -56,3 +56,6 @@ app.*.map.json
 # Local tooling and dependencies
 node_modules/
 supabase/.temp/
+
+# Local Netlify folder
+.netlify

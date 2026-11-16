@@ -6,12 +6,9 @@ flutter_sha256="25ed8c3c29d51a7353f2a944310b478af8214920639524b19c50a19e6c044c5a
 cache_root="${NETLIFY_CACHE_DIR:-${HOME}/.cache}"
 flutter_root="${cache_root}/flutter-sdk-${flutter_version}"
 temp_dir=""
-created_env=0
+build_args=(--release)
 
 cleanup() {
-  if [[ "$created_env" -eq 1 ]]; then
-    rm -f .env
-  fi
   if [[ -n "$temp_dir" ]]; then
     rm -rf "$temp_dir"
   fi
@@ -23,9 +20,6 @@ if [[ -e .env ]]; then
   exit 1
 fi
 
-: > .env
-created_env=1
-
 write_public_env() {
   local key="$1"
   local value="${!key:-}"
@@ -36,7 +30,7 @@ write_public_env() {
   fi
 
   if [[ -n "$value" ]]; then
-    printf '%s=%s\n' "$key" "$value" >> .env
+    build_args+=("--dart-define=${key}=${value}")
   fi
 }
 
@@ -63,4 +57,5 @@ fi
 
 "${flutter_root}/bin/flutter" config --no-analytics
 "${flutter_root}/bin/flutter" pub get
-"${flutter_root}/bin/flutter" build web --release
+"${flutter_root}/bin/flutter" build web "${build_args[@]}"
+rm -f build/web/assets/.env

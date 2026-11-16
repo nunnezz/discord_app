@@ -1,5 +1,8 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/models.dart';
@@ -17,8 +20,13 @@ import 'voice_call_agora.dart';
 // do balão de texto normal — ver o trecho correspondente em
 // cord_home_page.dart (_DmMessagesList).
 const String kVoiceInvitePrefix = 'VOICE_CALL_INVITE::';
+const Duration kVoiceInviteLifetime = Duration(hours: 24);
 
-String buildVoiceInviteMessage({required String roomId, required String channelName}) =>
+bool isVoiceInviteExpired(DateTime expiresAt, {DateTime? now}) =>
+    !expiresAt.isAfter(now ?? DateTime.now());
+
+String buildVoiceInviteMessage(
+        {required String roomId, required String channelName}) =>
     '$kVoiceInvitePrefix$roomId::$channelName';
 
 /// Faz o caminho inverso: separa `roomId` e `channelName` de dentro do
@@ -40,6 +48,12 @@ String buildVoiceInviteMessage({required String roomId, required String channelN
   if (roomId.isEmpty || channelName.isEmpty) return null;
 
   return (roomId: roomId, channelName: channelName);
+}
+
+String? serverIdFromVoiceRoomId(String roomId) {
+  final separatorIndex = roomId.indexOf('::');
+  if (separatorIndex <= 0) return null;
+  return roomId.substring(0, separatorIndex);
 }
 
 // =========================================================================
@@ -66,6 +80,9 @@ class _VoiceParticipant {
   final String? avatarUrl;
   final bool micMuted;
   final bool cameraOn;
+  final bool screenSharing;
+  final int? agoraUid;
+  final int? screenAgoraUid;
   final bool isLocal;
 
   const _VoiceParticipant({
@@ -73,7 +90,10 @@ class _VoiceParticipant {
     required this.displayName,
     required this.micMuted,
     required this.cameraOn,
+    required this.screenSharing,
     required this.isLocal,
+    this.agoraUid,
+    this.screenAgoraUid,
     this.avatarUrl,
   });
 }
@@ -110,21 +130,35 @@ class VoiceCallScreen extends StatefulWidget {
   State<VoiceCallScreen> createState() => _VoiceCallScreenState();
 }
 
+Route<void> buildVoiceCallRoute(VoiceCallScreen screen) =>
+    PageRouteBuilder<void>(
+      opaque: false,
+      barrierColor: null,
+      barrierDismissible: false,
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
+      pageBuilder: (_, __, ___) => screen,
+      transitionsBuilder: (_, __, ___, child) => child,
+    );
+
 class _VoiceCallScreenState extends State<VoiceCallScreen> {
   final VoiceCallService _voiceService = VoiceCallService();
   late final RealtimeChannel _presenceChannel;
 
   bool _micMuted = false;
   bool _cameraOn = false;
+  bool _screenSharing = false;
   bool _connecting = true;
   bool _agoraJoinConfirmed = false;
+  bool _isMinimized = false;
+  int? _localAgoraUid;
+  int? _localScreenAgoraUid;
   String? _errorMessage;
 
   // Mapeia o `uid` numérico do Agora -> dados reais do participante,
   // resolvidos via Presence (que compartilha nome/avatar/estado do mic
   // entre todo mundo na "sala", sem precisar de nenhuma tabela nova no
   // banco — Presence é efêmero e limpa sozinho quando alguém sai).
-  final Map<int, Map<String, dynamic>> _remotePresenceByUid = {};
   final Set<int> _remoteUids = {};
 
   @override
@@ -138,15 +172,11 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
       // 1. Entra no canal de Presence do Supabase — é isso que dá nome
       // e avatar reais aos participantes, em vez de só "uid 8271".
       _presenceChannel = supabase.channel('voice:${widget.roomId}');
-      _presenceChannel.onPresenceSync((_) => setState(() {})).subscribe((status, error) async {
+      _presenceChannel.onPresenceSync((_) {
+        if (mounted) setState(() {});
+      }).subscribe((status, error) async {
         if (status == RealtimeSubscribeStatus.subscribed) {
-          await _presenceChannel.track({
-            'user_id': widget.myUserId,
-            'display_name': widget.myDisplayName,
-            'avatar_url': widget.myAvatarUrl,
-            'mic_muted': _micMuted,
-            'camera_on': _cameraOn,
-          });
+          await _trackPresence();
         }
       });
 
@@ -158,24 +188,42 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
         body: {'channelName': widget.roomId, 'uid': 0},
       );
       final token = (tokenResponse.data as Map)['token'] as String;
+      final screenUid = kIsWeb ? null : Random.secure().nextInt(0x7ffffffe) + 1;
+      String? screenToken;
+      if (screenUid != null) {
+        final screenTokenResponse = await supabase.functions.invoke(
+          'agora-token',
+          body: {'channelName': widget.roomId, 'uid': screenUid},
+        );
+        screenToken = (screenTokenResponse.data as Map)['token'] as String;
+      }
+      _localScreenAgoraUid = screenUid;
 
       // 3. Entra no canal de voz de verdade (Agora), com esse token.
       await _voiceService.joinChannel(
         channelName: widget.roomId,
+        screenShareUid: screenUid,
+        screenShareToken: screenToken,
         token: token,
         onUserJoined: (uid) => setState(() => _remoteUids.add(uid)),
         onUserLeft: (uid) => setState(() {
-          _remotePresenceByUid.remove(uid);
           _remoteUids.remove(uid);
         }),
-        onJoinSuccess: () {
-          // Essa é a confirmação DE VERDADE de que o áudio está
-          // conectado — diferente do `_connecting = false` abaixo, que
-          // só significa "o comando foi enviado sem erro imediato".
+        onJoinSuccess: (uid) async {
+          _localAgoraUid = uid;
+          if (kIsWeb) _localScreenAgoraUid = uid;
           if (mounted) setState(() => _agoraJoinConfirmed = true);
+          await _trackPresence();
+        },
+        onScreenShareStateChanged: (sharing) async {
+          if (!mounted || _screenSharing == sharing) return;
+          setState(() => _screenSharing = sharing);
+          await _trackPresence();
         },
         onErrorOccurred: (description) {
-          if (mounted) setState(() => _errorMessage = 'Erro do Agora: $description');
+          if (mounted) {
+            setState(() => _errorMessage = 'Erro do Agora: $description');
+          }
         },
       );
 
@@ -190,11 +238,25 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
     }
   }
 
+  Future<void> _trackPresence() async {
+    await _presenceChannel.track({
+      'user_id': widget.myUserId,
+      'display_name': widget.myDisplayName,
+      'avatar_url': widget.myAvatarUrl,
+      'mic_muted': _micMuted,
+      'camera_on': _cameraOn,
+      'screen_sharing': _screenSharing,
+      'agora_uid': _localAgoraUid,
+      'screen_uid': _localScreenAgoraUid,
+    });
+  }
+
   /// Traduz os erros mais comuns do Agora/navegador para uma frase
   /// legível, em vez de despejar o stack trace técnico na tela.
   String _friendlyVoiceError(Object e) {
     final raw = e.toString();
-    if (raw.contains('NotFoundError') || raw.contains('Requested device not found')) {
+    if (raw.contains('NotFoundError') ||
+        raw.contains('Requested device not found')) {
       return 'Nenhum microfone foi encontrado neste dispositivo. '
           'Você entrou na chamada, mas não vai conseguir falar até conectar um microfone.';
     }
@@ -206,27 +268,184 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
   }
 
   Future<void> _toggleMic() async {
-    setState(() => _micMuted = !_micMuted);
-    await _voiceService.toggleMic(_micMuted);
-    await _presenceChannel.track({
-      'user_id': widget.myUserId,
-      'display_name': widget.myDisplayName,
-      'avatar_url': widget.myAvatarUrl,
-      'mic_muted': _micMuted,
-      'camera_on': _cameraOn,
-    });
+    final muted = !_micMuted;
+    try {
+      await _voiceService.toggleMic(muted);
+      if (!mounted) return;
+      setState(() => _micMuted = muted);
+      await _trackPresence();
+    } catch (error) {
+      _showCallError('Não foi possível alterar o microfone: $error');
+    }
   }
 
   Future<void> _toggleCamera() async {
-    setState(() => _cameraOn = !_cameraOn);
-    await _voiceService.toggleCamera(_cameraOn);
-    await _presenceChannel.track({
-      'user_id': widget.myUserId,
-      'display_name': widget.myDisplayName,
-      'avatar_url': widget.myAvatarUrl,
-      'mic_muted': _micMuted,
-      'camera_on': _cameraOn,
-    });
+    final enabled = !_cameraOn;
+    try {
+      await _voiceService.toggleCamera(enabled);
+      if (!mounted) return;
+      setState(() => _cameraOn = enabled);
+      await _trackPresence();
+    } catch (error) {
+      _showCallError('Não foi possível alterar a câmera: $error');
+    }
+  }
+
+  bool get _usesDesktopSourcePicker =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.macOS);
+
+  Future<ScreenCaptureSourceInfo?> _chooseScreenCaptureSource() async {
+    final sources = await _voiceService.getScreenCaptureSources();
+    if (sources.isEmpty) {
+      throw StateError('Não foi encontrada nenhuma tela ou janela disponível.');
+    }
+    if (!mounted) return null;
+
+    return showDialog<ScreenCaptureSourceInfo>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _C.card,
+        title: const Text('Compartilhar tela'),
+        content: SizedBox(
+          width: 420,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final source in sources)
+                ListTile(
+                  leading: Icon(
+                    source.type ==
+                            ScreenCaptureSourceType
+                                .screencapturesourcetypeScreen
+                        ? Icons.monitor_rounded
+                        : Icons.window_rounded,
+                    color: _C.blurple,
+                  ),
+                  title: Text(source.sourceName ?? 'Janela sem nome'),
+                  subtitle: Text(
+                    source.type ==
+                            ScreenCaptureSourceType
+                                .screencapturesourcetypeScreen
+                        ? 'Tela inteira'
+                        : 'Programa',
+                  ),
+                  onTap: () => Navigator.pop(context, source),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleScreenShare() async {
+    final sharing = !_screenSharing;
+    try {
+      if (!sharing) {
+        await _voiceService.stopScreenShare();
+      } else {
+        final source = _usesDesktopSourcePicker
+            ? await _chooseScreenCaptureSource()
+            : null;
+        if (source == null && _usesDesktopSourcePicker) return;
+        final screenUid = _localScreenAgoraUid;
+        if (screenUid == null) {
+          throw StateError('A conexão da chamada ainda não está pronta.');
+        }
+        await _voiceService.startScreenShare(
+          uid: screenUid,
+          source: source,
+        );
+      }
+      if (!mounted) return;
+      setState(() => _screenSharing = sharing);
+      await _trackPresence();
+    } catch (error) {
+      if (error is UnsupportedError) {
+        _showCallError(error.message?.toString() ??
+            'O compartilhamento de tela não está disponível nesta plataforma.');
+      } else {
+        _showCallError('Não foi possível compartilhar a tela: $error');
+      }
+    }
+  }
+
+  Future<void> _showScreenShareFullscreen(_VoiceParticipant participant) async {
+    final Widget streamView;
+    if (participant.isLocal) {
+      streamView = _voiceService.localVideoView(screenShare: true);
+    } else {
+      final uid = participant.screenAgoraUid;
+      final localUid = _localAgoraUid;
+      if (uid == null || localUid == null) return;
+      streamView = _voiceService.remoteVideoView(
+        uid,
+        widget.roomId,
+        localUid: localUid,
+        screenShare: !kIsWeb,
+      );
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog.fullscreen(
+        backgroundColor: Colors.black,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Center(child: streamView),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                child: Container(
+                  color: Colors.black54,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.screen_share_rounded,
+                          color: Colors.white),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Transmissão de ${participant.displayName}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Voltar à chamada',
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        icon: const Icon(Icons.close_rounded,
+                            color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showCallError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _disconnect() async {
@@ -272,16 +491,29 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
       }
     }
 
-    final others = othersPresence.values
-        .map((payload) => _VoiceParticipant(
-              userId: payload['user_id'] as String,
-              displayName: payload['display_name'] as String? ?? 'Alguém',
-              avatarUrl: payload['avatar_url'] as String?,
-              micMuted: payload['mic_muted'] as bool? ?? false,
-              cameraOn: payload['camera_on'] as bool? ?? false,
-              isLocal: false,
-            ))
-        .toList();
+    final others = othersPresence.values.map((payload) {
+      final uidValue = payload['agora_uid'];
+      final uid = uidValue is num
+          ? uidValue.toInt()
+          : int.tryParse(uidValue?.toString() ?? '');
+      final screenUidValue = payload['screen_uid'];
+      final screenUid = screenUidValue is num
+          ? screenUidValue.toInt()
+          : int.tryParse(screenUidValue?.toString() ?? '');
+      return _VoiceParticipant(
+        userId: payload['user_id'] as String,
+        displayName: payload['display_name'] as String? ?? 'Alguém',
+        avatarUrl: payload['avatar_url'] as String?,
+        micMuted: payload['mic_muted'] as bool? ?? false,
+        cameraOn: payload['camera_on'] as bool? ?? false,
+        screenSharing: payload['screen_sharing'] as bool? ?? false,
+        agoraUid: uid != null && _remoteUids.contains(uid) ? uid : null,
+        screenAgoraUid: screenUid != null && _remoteUids.contains(screenUid)
+            ? screenUid
+            : null,
+        isLocal: false,
+      );
+    }).toList();
 
     return [
       _VoiceParticipant(
@@ -290,6 +522,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
         avatarUrl: widget.myAvatarUrl,
         micMuted: _micMuted,
         cameraOn: _cameraOn,
+        screenSharing: _screenSharing,
+        agoraUid: _localAgoraUid,
+        screenAgoraUid: _localScreenAgoraUid,
         isLocal: true,
       ),
       ...others,
@@ -298,6 +533,20 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return PopScope<void>(
+      canPop: _isMinimized,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && !_isMinimized) {
+          setState(() => _isMinimized = true);
+        }
+      },
+      child: _isMinimized
+          ? _buildMinimizedCallOverlay(context)
+          : _buildCallScreen(),
+    );
+  }
+
+  Widget _buildCallScreen() {
     return Scaffold(
       backgroundColor: _C.bg,
       body: SafeArea(
@@ -312,15 +561,18 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
               // do lugar (ex: token inválido, erro de rede).
               connecting: _connecting || !_agoraJoinConfirmed,
               onInvite: _openInviteDialog,
+              onMinimize: () => setState(() => _isMinimized = true),
             ),
             if (_errorMessage != null)
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text(_errorMessage!, style: const TextStyle(color: _C.red)),
+                child:
+                    Text(_errorMessage!, style: const TextStyle(color: _C.red)),
               ),
             Expanded(
               child: _connecting
-                  ? const Center(child: CircularProgressIndicator(color: _C.blurple))
+                  ? const Center(
+                      child: CircularProgressIndicator(color: _C.blurple))
                   : Padding(
                       padding: const EdgeInsets.all(20),
                       child: LayoutBuilder(
@@ -333,14 +585,67 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                                   : 1;
                           return GridView.builder(
                             itemCount: participants.length,
-                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount: columns,
                               crossAxisSpacing: 16,
                               mainAxisSpacing: 16,
                               childAspectRatio: 16 / 10,
                             ),
-                            itemBuilder: (context, index) =>
-                                _ParticipantTile(participant: participants[index]),
+                            itemBuilder: (context, index) {
+                              final participant = participants[index];
+                              Widget? videoView;
+                              Widget? secondaryVideoView;
+                              if (participant.isLocal) {
+                                if (participant.screenSharing) {
+                                  videoView = _voiceService.localVideoView(
+                                    screenShare: true,
+                                  );
+                                  if (participant.cameraOn) {
+                                    secondaryVideoView =
+                                        _voiceService.localVideoView();
+                                  }
+                                } else if (participant.cameraOn) {
+                                  videoView = _voiceService.localVideoView();
+                                }
+                              } else if (_localAgoraUid != null &&
+                                  participant.screenSharing &&
+                                  participant.screenAgoraUid != null) {
+                                videoView = _voiceService.remoteVideoView(
+                                  participant.screenAgoraUid!,
+                                  widget.roomId,
+                                  localUid: _localAgoraUid!,
+                                );
+                                if (participant.cameraOn &&
+                                    participant.agoraUid != null) {
+                                  secondaryVideoView =
+                                      _voiceService.remoteVideoView(
+                                    participant.agoraUid!,
+                                    widget.roomId,
+                                    localUid: _localAgoraUid!,
+                                  );
+                                }
+                              } else if (_localAgoraUid != null &&
+                                  participant.cameraOn &&
+                                  participant.agoraUid != null) {
+                                videoView = _voiceService.remoteVideoView(
+                                  participant.agoraUid!,
+                                  widget.roomId,
+                                  localUid: _localAgoraUid!,
+                                );
+                              }
+                              return _ParticipantTile(
+                                key: ValueKey(participant.userId),
+                                participant: participant,
+                                videoView: videoView,
+                                secondaryVideoView: secondaryVideoView,
+                                onExpandScreenShare: participant.screenSharing
+                                    ? () => _showScreenShareFullscreen(
+                                          participant,
+                                        )
+                                    : null,
+                              );
+                            },
                           );
                         },
                       ),
@@ -349,13 +654,141 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
             _CallControlBar(
               micMuted: _micMuted,
               cameraOn: _cameraOn,
+              screenSharing: _screenSharing,
               onToggleMic: _toggleMic,
               onToggleCamera: _toggleCamera,
+              onToggleScreenShare: _toggleScreenShare,
               onDisconnect: _disconnect,
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMinimizedCallOverlay(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    if (size.width < 600) {
+      return Stack(
+        children: [
+          Positioned(
+            right: 12,
+            bottom: 12,
+            child: Tooltip(
+              message: '${widget.channelName} — voltar à chamada',
+              child: Material(
+                color: _C.blurple,
+                elevation: 12,
+                shape: const CircleBorder(),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () => setState(() => _isMinimized = false),
+                  child: const SizedBox(
+                    width: 56,
+                    height: 56,
+                    child:
+                        Icon(Icons.call_rounded, color: Colors.white, size: 26),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final width = min(360.0, size.width - 24);
+    return Stack(
+      children: [
+        Positioned(
+          right: 12,
+          bottom: 12,
+          width: width,
+          child: Material(
+            color: _C.card,
+            elevation: 12,
+            borderRadius: BorderRadius.circular(12),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.volume_up_rounded,
+                          color: _C.textMuted, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          widget.channelName,
+                          style: const TextStyle(
+                            color: _C.textHeader,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Voltar à chamada',
+                        onPressed: () => setState(() => _isMinimized = false),
+                        icon: const Icon(Icons.open_in_full_rounded,
+                            color: _C.textMuted),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1, color: _C.divider),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      IconButton(
+                        tooltip:
+                            _micMuted ? 'Ativar microfone' : 'Mutar microfone',
+                        onPressed: _toggleMic,
+                        icon: Icon(
+                          _micMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                          color: _micMuted ? _C.red : _C.textHeader,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: _cameraOn ? 'Desligar câmera' : 'Ligar câmera',
+                        onPressed: _toggleCamera,
+                        icon: Icon(
+                          _cameraOn
+                              ? Icons.videocam_rounded
+                              : Icons.videocam_off_rounded,
+                          color: _C.textHeader,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: _screenSharing
+                            ? 'Parar compartilhamento'
+                            : 'Compartilhar tela',
+                        onPressed: _toggleScreenShare,
+                        icon: Icon(
+                          _screenSharing
+                              ? Icons.stop_screen_share_rounded
+                              : Icons.screen_share_rounded,
+                          color: _screenSharing ? _C.blurple : _C.textHeader,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Desconectar',
+                        onPressed: _disconnect,
+                        icon: const Icon(Icons.call_end_rounded, color: _C.red),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -364,14 +797,20 @@ class _CallTopBar extends StatelessWidget {
   final String channelName;
   final bool connecting;
   final VoidCallback onInvite;
-  const _CallTopBar({required this.channelName, required this.connecting, required this.onInvite});
+  final VoidCallback onMinimize;
+  const _CallTopBar(
+      {required this.channelName,
+      required this.connecting,
+      required this.onInvite,
+      required this.onMinimize});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       height: 56,
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _C.divider))),
+      decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: _C.divider))),
       child: Row(
         children: [
           const Icon(Icons.volume_up_rounded, color: _C.textMuted, size: 20),
@@ -380,12 +819,21 @@ class _CallTopBar extends StatelessWidget {
             child: Text(channelName,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                    color: _C.textHeader, fontWeight: FontWeight.bold, fontSize: 16)),
+                    color: _C.textHeader,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16)),
           ),
           IconButton(
             tooltip: 'Convidar amigos',
-            icon: const Icon(Icons.person_add_alt_1_rounded, color: _C.textMuted),
+            icon:
+                const Icon(Icons.person_add_alt_1_rounded, color: _C.textMuted),
             onPressed: onInvite,
+          ),
+          IconButton(
+            tooltip: 'Minimizar chamada e continuar usando o app',
+            icon: const Icon(Icons.picture_in_picture_alt_rounded,
+                color: _C.textMuted),
+            onPressed: onMinimize,
           ),
           const SizedBox(width: 4),
           Container(
@@ -398,7 +846,8 @@ class _CallTopBar extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.circle, color: connecting ? Colors.orange : _C.green, size: 8),
+                Icon(Icons.circle,
+                    color: connecting ? Colors.orange : _C.green, size: 8),
                 const SizedBox(width: 6),
                 Text(connecting ? 'Conectando...' : 'Conectado',
                     style: TextStyle(
@@ -416,7 +865,17 @@ class _CallTopBar extends StatelessWidget {
 
 class _ParticipantTile extends StatelessWidget {
   final _VoiceParticipant participant;
-  const _ParticipantTile({required this.participant});
+  final Widget? videoView;
+  final Widget? secondaryVideoView;
+  final VoidCallback? onExpandScreenShare;
+
+  const _ParticipantTile({
+    super.key,
+    required this.participant,
+    required this.videoView,
+    required this.secondaryVideoView,
+    required this.onExpandScreenShare,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -430,24 +889,13 @@ class _ParticipantTile extends StatelessWidget {
       child: Stack(
         children: [
           Positioned.fill(
-            child: participant.cameraOn
+            child: participant.cameraOn || participant.screenSharing
                 ? Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [_C.blurple, _C.bg],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                    ),
+                    color: _C.bg,
                     alignment: Alignment.center,
-                    // Placeholder de vídeo — para exibir o vídeo real do
-                    // Agora aqui, troque este Icon por
-                    // `_voiceService.localVideoView()` (participante
-                    // local) ou `.remoteVideoView(uid, roomId)`
-                    // (participantes remotos, cruzando o uid do Agora
-                    // com o userId do Presence).
-                    child: Icon(Icons.videocam_rounded,
-                        color: Colors.white.withOpacity(0.85), size: 42),
+                    child: videoView ??
+                        const Icon(Icons.videocam_rounded,
+                            color: _C.textMuted, size: 42),
                   )
                 : Container(
                     color: _C.card,
@@ -455,20 +903,49 @@ class _ParticipantTile extends StatelessWidget {
                     child: CircleAvatar(
                       radius: 34,
                       backgroundColor: _C.blurple,
-                      backgroundImage:
-                          participant.avatarUrl != null ? NetworkImage(participant.avatarUrl!) : null,
+                      backgroundImage: participant.avatarUrl != null
+                          ? NetworkImage(participant.avatarUrl!)
+                          : null,
                       child: participant.avatarUrl == null
                           ? Text(
                               participant.displayName.isNotEmpty
                                   ? participant.displayName[0].toUpperCase()
                                   : '?',
                               style: const TextStyle(
-                                  color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold),
+                                  color: Colors.white,
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.bold),
                             )
                           : null,
                     ),
                   ),
           ),
+          if (secondaryVideoView != null)
+            Positioned(
+              right: 10,
+              top: 10,
+              width: 112,
+              height: 68,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: secondaryVideoView!,
+              ),
+            ),
+          if (onExpandScreenShare != null)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Material(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(8),
+                child: IconButton(
+                  tooltip: 'Assistir transmissão em tela cheia',
+                  onPressed: onExpandScreenShare,
+                  icon:
+                      const Icon(Icons.fullscreen_rounded, color: Colors.white),
+                ),
+              ),
+            ),
           Positioned(
             left: 10,
             bottom: 10,
@@ -482,14 +959,23 @@ class _ParticipantTile extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    participant.micMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                    participant.micMuted
+                        ? Icons.mic_off_rounded
+                        : Icons.mic_rounded,
                     color: participant.micMuted ? _C.red : _C.green,
                     size: 14,
                   ),
                   const SizedBox(width: 6),
                   Text(participant.displayName,
                       style: const TextStyle(
-                          color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600)),
+                  if (participant.screenSharing) ...[
+                    const SizedBox(width: 6),
+                    const Icon(Icons.screen_share_rounded,
+                        color: Colors.white, size: 14),
+                  ],
                 ],
               ),
             ),
@@ -503,15 +989,19 @@ class _ParticipantTile extends StatelessWidget {
 class _CallControlBar extends StatelessWidget {
   final bool micMuted;
   final bool cameraOn;
+  final bool screenSharing;
   final VoidCallback onToggleMic;
   final VoidCallback onToggleCamera;
+  final VoidCallback onToggleScreenShare;
   final VoidCallback onDisconnect;
 
   const _CallControlBar({
     required this.micMuted,
     required this.cameraOn,
+    required this.screenSharing,
     required this.onToggleMic,
     required this.onToggleCamera,
+    required this.onToggleScreenShare,
     required this.onDisconnect,
   });
 
@@ -519,7 +1009,8 @@ class _CallControlBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 20),
-      decoration: const BoxDecoration(border: Border(top: BorderSide(color: _C.divider))),
+      decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: _C.divider))),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -531,10 +1022,21 @@ class _CallControlBar extends StatelessWidget {
           ),
           const SizedBox(width: 16),
           _CallActionButton(
-            icon: cameraOn ? Icons.videocam_rounded : Icons.videocam_off_rounded,
+            icon:
+                cameraOn ? Icons.videocam_rounded : Icons.videocam_off_rounded,
             isActive: !cameraOn,
             tooltip: cameraOn ? 'Desligar câmera' : 'Ligar câmera',
             onTap: onToggleCamera,
+          ),
+          const SizedBox(width: 16),
+          _CallActionButton(
+            icon: screenSharing
+                ? Icons.stop_screen_share_rounded
+                : Icons.screen_share_rounded,
+            isActive: screenSharing,
+            tooltip:
+                screenSharing ? 'Parar compartilhamento' : 'Compartilhar tela',
+            onTap: onToggleScreenShare,
           ),
           const SizedBox(width: 24),
           _CallActionButton(
@@ -574,8 +1076,9 @@ class _CallActionButtonState extends State<_CallActionButton> {
 
   @override
   Widget build(BuildContext context) {
-    final Color bgColor =
-        widget.isDisconnect ? _C.red : (widget.isActive ? Colors.white : _C.darker);
+    final Color bgColor = widget.isDisconnect
+        ? _C.red
+        : (widget.isActive ? Colors.white : _C.darker);
     final Color iconColor = widget.isDisconnect
         ? Colors.white
         : (widget.isActive ? Colors.black : Colors.white);
@@ -595,7 +1098,8 @@ class _CallActionButtonState extends State<_CallActionButton> {
             transform: Matrix4.identity()..scale(_hovering ? 1.06 : 1.0),
             decoration: BoxDecoration(
               color: bgColor,
-              borderRadius: BorderRadius.circular(widget.isDisconnect ? 26 : 16),
+              borderRadius:
+                  BorderRadius.circular(widget.isDisconnect ? 26 : 16),
             ),
             alignment: Alignment.center,
             child: Icon(widget.icon, color: iconColor, size: 24),
@@ -644,7 +1148,8 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
       await DmService.sendMessage(
         conversationId: conversationId,
         senderId: widget.myUserId,
-        content: buildVoiceInviteMessage(roomId: widget.roomId, channelName: widget.channelName),
+        content: buildVoiceInviteMessage(
+            roomId: widget.roomId, channelName: widget.channelName),
       );
       if (mounted) {
         setState(() {
@@ -675,7 +1180,10 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text('Convidar amigos',
-                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               Text('Para "${widget.channelName}"',
                   style: const TextStyle(color: _C.textMuted, fontSize: 13)),
@@ -687,7 +1195,9 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
                     if (!snapshot.hasData) {
                       return const Padding(
                         padding: EdgeInsets.symmetric(vertical: 24),
-                        child: Center(child: CircularProgressIndicator(color: _C.blurple)),
+                        child: Center(
+                            child:
+                                CircularProgressIndicator(color: _C.blurple)),
                       );
                     }
                     final friends = snapshot.data!;
@@ -711,8 +1221,9 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
                           contentPadding: EdgeInsets.zero,
                           leading: CircleAvatar(
                             backgroundColor: _C.blurple,
-                            backgroundImage:
-                                friend.avatarUrl != null ? NetworkImage(friend.avatarUrl!) : null,
+                            backgroundImage: friend.avatarUrl != null
+                                ? NetworkImage(friend.avatarUrl!)
+                                : null,
                             child: friend.avatarUrl == null
                                 ? Text(friend.displayName[0].toUpperCase(),
                                     style: const TextStyle(color: Colors.white))
@@ -721,9 +1232,11 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
                           title: Text(friend.displayName,
                               style: const TextStyle(color: Colors.white)),
                           subtitle: Text('@${friend.username}',
-                              style: const TextStyle(color: _C.textMuted, fontSize: 12)),
+                              style: const TextStyle(
+                                  color: _C.textMuted, fontSize: 12)),
                           trailing: invited
-                              ? const Icon(Icons.check_circle_rounded, color: _C.green)
+                              ? const Icon(Icons.check_circle_rounded,
+                                  color: _C.green)
                               : sending
                                   ? const SizedBox(
                                       width: 20,
@@ -733,7 +1246,8 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
                                   : OutlinedButton(
                                       onPressed: () => _invite(friend),
                                       style: OutlinedButton.styleFrom(
-                                        side: const BorderSide(color: _C.blurple),
+                                        side:
+                                            const BorderSide(color: _C.blurple),
                                       ),
                                       child: const Text('Convidar',
                                           style: TextStyle(color: _C.blurple)),
@@ -749,7 +1263,8 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
                 alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Fechar', style: TextStyle(color: _C.textMuted)),
+                  child: const Text('Fechar',
+                      style: TextStyle(color: _C.textMuted)),
                 ),
               ),
             ],

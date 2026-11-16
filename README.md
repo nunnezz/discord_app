@@ -47,6 +47,14 @@ Não execute o schema completo em um projeto que já tem tabelas ou dados. Para 
 
 Servidores novos são privados por padrão. O dono pode alterar a visibilidade nas opções do servidor. Servidores públicos aparecem na descoberta e usuários autenticados podem entrar; servidores privados exigem um código de convite, válido por 7 dias. Membros podem gerar um código pelo menu do servidor e compartilhá-lo; quem recebe pode colar o código em “Entrar com convite”.
 
+Para fotos de perfil, execute a migration [20261115223000_profile_avatar_storage.sql](supabase/migrations/20261115223000_profile_avatar_storage.sql) em um projeto existente. Ela cria o bucket público `avatars` (JPG, PNG e WEBP, até 5 MB) e limita o envio/alteração à pasta do próprio usuário. Instalações novas recebem essa configuração pelo `schema.sql`.
+
+### Mídia e expiração do chat
+
+O chat aceita fotos JPG/PNG/WEBP de até 5 MB e vídeos MP4/WEBM/MOV de até 20 MB. Os arquivos ficam no bucket privado `chat-media`; apenas participantes da conversa/canal podem obter links temporários. Mensagens com mídia têm o arquivo removido após 3 meses (a legenda continua até completar 6 meses); mensagens escritas e o histórico existente expiram após 6 meses.
+
+Em um projeto existente, configure um segredo aleatório `CHAT_RETENTION_CRON_SECRET` tanto nas secrets das Edge Functions quanto no Supabase Vault com o nome `chat_retention_cron_secret`. Depois faça deploy de `cleanup-chat-retention` com JWT verification desabilitado (a função valida o segredo dedicado no header), e execute a migration `20261116010000_chat_media_and_retention.sql`. Ela configura o bucket privado e agenda a limpeza diária. Nunca use a chave `service_role` como esse segredo.
+
 ## Edge Function de token do Agora
 
 A função está em [supabase/functions/agora-token/index.ts](supabase/functions/agora-token/index.ts).
@@ -69,6 +77,8 @@ Conecte o repositório GitHub ao site `https://cord-ap.netlify.app`. O arquivo `
 No painel do Netlify, configure `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `AGORA_APP_ID` em **Site configuration → Environment variables**. O `AGORA_APP_ID` deve ser o mesmo configurado para a Edge Function no Supabase. Esses valores são incluídos no app web e ficam visíveis no navegador; use somente valores públicos. Não configure o certificado do Agora nem uma chave `service_role` do Supabase no build do cliente. O certificado do Agora deve ficar apenas como segredo da Edge Function no Supabase.
 
 Depois de salvar as variáveis, faça commit e push para a branch conectada ao site para iniciar o deploy automático. O arquivo `.env` não deve ser enviado ao GitHub.
+
+Para um build local destinado ao Netlify Drop, passe somente as variáveis públicas com `--dart-define` e remova `build/web/assets/.env` antes do upload. Nunca inclua o certificado do Agora ou uma chave `service_role` no app web.
 
 ## Observações
 

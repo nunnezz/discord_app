@@ -1,4 +1,5 @@
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../config/app_config.dart';
@@ -38,7 +39,10 @@ import '../config/app_config.dart';
 // - Web: funciona direto no Chrome/Edge (pede permissão do navegador).
 
 class VoiceCallService {
-  RtcEngine? _engine;
+  RtcEngineEx? _engine;
+  bool _screenCaptureActive = false;
+  String? _screenChannelName;
+  int? _screenUid;
 
   /// Chame ao entrar no canal de voz. `channelName` pode ser, por
   /// exemplo, o nome do canal de voz do Discord-clone (ex: "Sala Geral").
@@ -53,30 +57,38 @@ class VoiceCallService {
   /// "conectado" mesmo sem áudio nenhum trafegando de verdade.
   Future<void> joinChannel({
     required String channelName,
+    int? screenShareUid,
+    String? screenShareToken,
     required void Function(int uid) onUserJoined,
     required void Function(int uid) onUserLeft,
-    void Function()? onJoinSuccess,
+    void Function(int uid)? onJoinSuccess,
     void Function(String errorDescription)? onErrorOccurred,
+    void Function(bool sharing)? onScreenShareStateChanged,
     String? token, // null = modo de teste (App em "Testing mode")
   }) async {
     final appId = AppConfig.agoraAppId;
     if (appId.isEmpty) {
       throw StateError('AGORA_APP_ID is not configured');
     }
+    _screenChannelName = channelName;
+    _screenUid = kIsWeb ? null : screenShareUid;
 
-    _engine = createAgoraRtcEngine();
+    _engine = createAgoraRtcEngineEx();
     await _engine!.initialize(RtcEngineContext(appId: appId));
 
     await _engine!.enableAudio();
-    // Comente a linha abaixo se quiser SOMENTE voz (canal de voz puro,
-    // como os "CANAIS DE VOZ" do seu app) e não precisar de vídeo.
     await _engine!.enableVideo();
 
     _engine!.registerEventHandler(
       RtcEngineEventHandler(
         onJoinChannelSuccess: (connection, elapsed) {
-          debugPrint('Entrou no canal $channelName de verdade (confirmado pelo Agora)');
-          onJoinSuccess?.call();
+          debugPrint(
+              'Entrou no canal $channelName de verdade (confirmado pelo Agora)');
+          final uid = connection.localUid;
+          if (uid != null) {
+            if (kIsWeb) _screenUid = uid;
+            onJoinSuccess?.call(uid);
+          }
         },
         onUserJoined: (connection, remoteUid, elapsed) {
           onUserJoined(remoteUid);
@@ -95,6 +107,31 @@ class VoiceCallService {
             onErrorOccurred?.call('Conexão falhou (motivo: $reason)');
           }
         },
+        onLocalVideoStateChanged: (source, state, reason) async {
+          debugPrint(
+            'Estado do vídeo local Agora: fonte=$source, estado=$state, motivo=$reason',
+          );
+          if (source != VideoSourceType.videoSourceScreen &&
+              source != VideoSourceType.videoSourceScreenPrimary) {
+            return;
+          }
+          if (state == LocalVideoStreamState.localVideoStreamStateCapturing ||
+              state == LocalVideoStreamState.localVideoStreamStateEncoding) {
+            onScreenShareStateChanged?.call(true);
+          } else if (state ==
+                  LocalVideoStreamState.localVideoStreamStateStopped ||
+              state == LocalVideoStreamState.localVideoStreamStateFailed) {
+            onScreenShareStateChanged?.call(false);
+            _screenCaptureActive = false;
+            try {
+              await _updateScreenPublishing(false);
+            } catch (error) {
+              onErrorOccurred?.call(
+                'Não foi possível encerrar a transmissão de tela: $error',
+              );
+            }
+          }
+        },
       ),
     );
 
@@ -102,11 +139,48 @@ class VoiceCallService {
       token: token ?? '', // vazio = modo de teste
       channelId: channelName,
       uid: 0,
-      options: const ChannelMediaOptions(
-        clientRoleType: ClientRoleType.clientRoleBroadcaster,
-        channelProfile: ChannelProfileType.channelProfileCommunication,
-      ),
+      options: kIsWeb
+          ? const ChannelMediaOptions(
+              clientRoleType: ClientRoleType.clientRoleBroadcaster,
+              channelProfile: ChannelProfileType.channelProfileCommunication,
+              publishCameraTrack: false,
+              publishScreenTrack: true,
+              publishSecondaryScreenTrack: true,
+              publishScreenCaptureVideo: true,
+              publishScreenCaptureAudio: false,
+            )
+          : const ChannelMediaOptions(
+              clientRoleType: ClientRoleType.clientRoleBroadcaster,
+              channelProfile: ChannelProfileType.channelProfileCommunication,
+              publishCameraTrack: false,
+            ),
     );
+    if (!kIsWeb) {
+      if (screenShareUid == null || screenShareToken == null) {
+        throw ArgumentError(
+          'A conexão de compartilhamento exige UID e token nas plataformas nativas.',
+        );
+      }
+      await _engine!.joinChannelEx(
+        token: screenShareToken,
+        connection: RtcConnection(
+          channelId: channelName,
+          localUid: screenShareUid,
+        ),
+        options: const ChannelMediaOptions(
+          autoSubscribeAudio: false,
+          autoSubscribeVideo: false,
+          publishMicrophoneTrack: false,
+          publishCameraTrack: false,
+          publishScreenTrack: true,
+          publishSecondaryScreenTrack: true,
+          publishScreenCaptureVideo: true,
+          publishScreenCaptureAudio: false,
+          clientRoleType: ClientRoleType.clientRoleBroadcaster,
+          channelProfile: ChannelProfileType.channelProfileCommunication,
+        ),
+      );
+    }
   }
 
   Future<void> toggleMic(bool muted) async {
@@ -114,34 +188,205 @@ class VoiceCallService {
   }
 
   Future<void> toggleCamera(bool enabled) async {
-    await _engine?.enableLocalVideo(enabled);
+    final engine = _engine;
+    if (engine == null) return;
+    if (enabled) {
+      await engine.enableLocalVideo(true);
+      await engine.startPreview();
+      await engine.updateChannelMediaOptions(
+        const ChannelMediaOptions(publishCameraTrack: true),
+      );
+    } else {
+      await engine.updateChannelMediaOptions(
+        const ChannelMediaOptions(publishCameraTrack: false),
+      );
+      await engine.stopPreview();
+    }
+  }
+
+  Future<List<ScreenCaptureSourceInfo>> getScreenCaptureSources() async {
+    final engine = _engine;
+    if (engine == null) throw StateError('A chamada ainda não foi iniciada.');
+    if (kIsWeb ||
+        (defaultTargetPlatform != TargetPlatform.windows &&
+            defaultTargetPlatform != TargetPlatform.macOS)) {
+      return const [];
+    }
+    return engine.getScreenCaptureSources(
+      thumbSize: const SIZE(width: 120, height: 68),
+      iconSize: const SIZE(width: 48, height: 48),
+      includeScreen: true,
+    );
+  }
+
+  Future<void> startScreenShare({
+    required int uid,
+    ScreenCaptureSourceInfo? source,
+  }) async {
+    final engine = _engine;
+    if (engine == null) throw StateError('A chamada ainda não foi iniciada.');
+
+    if (kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      throw UnsupportedError(
+        'Compartilhamento de tela não funciona na versão web do Cord no iPhone. '
+        'Use um computador; para compartilhar no iPhone, é necessário um app iOS nativo com ReplayKit.',
+      );
+    }
+
+    if (kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      throw UnsupportedError(
+        'O navegador Android não oferece a captura de tela exigida pela versão web do Cord. '
+        'Use um computador ou um app Android nativo com suporte a compartilhamento.',
+      );
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.iOS && !kIsWeb) {
+      throw UnsupportedError(
+        'Compartilhamento no app iOS exige a extensão Broadcast Upload do Agora, que ainda não está configurada.',
+      );
+    }
+
+    if (kIsWeb ||
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS) {
+      await engine.startScreenCapture(
+        const ScreenCaptureParameters2(captureAudio: false, captureVideo: true),
+      );
+    } else if (defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS) {
+      if (source?.sourceId == null) {
+        throw StateError('Selecione uma janela ou uma tela para compartilhar.');
+      }
+      const captureParams = ScreenCaptureParameters(
+        captureMouseCursor: true,
+        frameRate: 15,
+      );
+      final sourceId = source!.sourceId!;
+      if (source.type ==
+          ScreenCaptureSourceType.screencapturesourcetypeScreen) {
+        await engine.startScreenCaptureByDisplayId(
+          displayId: sourceId,
+          regionRect: const Rectangle(x: 0, y: 0, width: 0, height: 0),
+          captureParams: captureParams,
+        );
+      } else if (source.type ==
+          ScreenCaptureSourceType.screencapturesourcetypeWindow) {
+        await engine.startScreenCaptureByWindowId(
+          windowId: sourceId,
+          regionRect: const Rectangle(x: 0, y: 0, width: 0, height: 0),
+          captureParams: captureParams,
+        );
+      } else {
+        throw UnsupportedError('Esse tipo de compartilhamento não é aceito.');
+      }
+    } else {
+      throw UnsupportedError(
+        'Compartilhamento de tela não disponível nesta plataforma.',
+      );
+    }
+
+    if (_screenUid != uid) {
+      await engine.stopScreenCapture();
+      throw StateError('A conexão de compartilhamento não está preparada.');
+    }
+    try {
+      await _updateScreenPublishing(true);
+    } catch (_) {
+      await engine.stopScreenCapture();
+      rethrow;
+    }
+    _screenCaptureActive = true;
+  }
+
+  Future<void> stopScreenShare() async {
+    final engine = _engine;
+    if (engine == null || !_screenCaptureActive) return;
+    await engine.stopScreenCapture();
+    await _updateScreenPublishing(false);
+    _screenCaptureActive = false;
+  }
+
+  Future<void> _updateScreenPublishing(bool publish) async {
+    final engine = _engine;
+    final uid = _screenUid;
+    final channelName = _screenChannelName;
+    if (engine == null || uid == null || channelName == null) {
+      throw StateError('A conexão de compartilhamento não está ativa.');
+    }
+    final options = ChannelMediaOptions(
+      publishScreenTrack: publish,
+      publishSecondaryScreenTrack: publish,
+      publishScreenCaptureVideo: publish,
+      publishScreenCaptureAudio: false,
+      clientRoleType: ClientRoleType.clientRoleBroadcaster,
+    );
+    if (kIsWeb) {
+      await engine.updateChannelMediaOptions(options);
+    } else {
+      await engine.updateChannelMediaOptionsEx(
+        options: ChannelMediaOptions(
+          autoSubscribeAudio: false,
+          autoSubscribeVideo: false,
+          publishMicrophoneTrack: false,
+          publishCameraTrack: false,
+          publishScreenTrack: publish,
+          publishSecondaryScreenTrack: publish,
+          publishScreenCaptureVideo: publish,
+          publishScreenCaptureAudio: false,
+          clientRoleType: ClientRoleType.clientRoleBroadcaster,
+        ),
+        connection: RtcConnection(channelId: channelName, localUid: uid),
+      );
+    }
   }
 
   Future<void> leaveChannel() async {
-    await _engine?.leaveChannel();
-    await _engine?.release();
+    final engine = _engine;
+    if (engine == null) return;
+    if (_screenCaptureActive) {
+      await stopScreenShare();
+    }
+    await engine.leaveChannel();
+    await engine.release();
     _engine = null;
+    _screenUid = null;
+    _screenCaptureActive = false;
   }
 
   /// Widget de vídeo local, para colocar no seu grid de participantes.
-  Widget localVideoView() {
+  Widget localVideoView({bool screenShare = false}) {
     if (_engine == null) return const SizedBox.shrink();
     return AgoraVideoView(
       controller: VideoViewController(
         rtcEngine: _engine!,
-        canvas: const VideoCanvas(uid: 0),
+        canvas: VideoCanvas(
+          uid: 0,
+          sourceType: screenShare
+              ? VideoSourceType.videoSourceScreen
+              : VideoSourceType.videoSourceCamera,
+        ),
       ),
     );
   }
 
   /// Widget de vídeo remoto de um participante específico.
-  Widget remoteVideoView(int uid, String channelName) {
+  Widget remoteVideoView(
+    int uid,
+    String channelName, {
+    required int localUid,
+    bool screenShare = false,
+  }) {
     if (_engine == null) return const SizedBox.shrink();
     return AgoraVideoView(
       controller: VideoViewController.remote(
         rtcEngine: _engine!,
-        canvas: VideoCanvas(uid: uid),
-        connection: RtcConnection(channelId: channelName),
+        canvas: VideoCanvas(
+          uid: uid,
+          sourceType: screenShare
+              ? VideoSourceType.videoSourceScreen
+              : VideoSourceType.videoSourceCamera,
+        ),
+        connection: RtcConnection(channelId: channelName, localUid: localUid),
       ),
     );
   }

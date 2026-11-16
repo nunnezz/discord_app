@@ -7,6 +7,14 @@ import 'supabase_client.dart';
 // PROFILE SERVICE
 // =========================================================================
 class ProfileService {
+  static const _avatarMimeTypesByExtension = {
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'webp': 'image/webp',
+  };
+  static const _maxAvatarSizeBytes = 5 * 1024 * 1024;
+
   /// Busca o perfil de UM usuário pelo id.
   static Future<Profile> fetchProfile(String userId) async {
     final row =
@@ -32,22 +40,40 @@ class ProfileService {
         .eq('id', profile.id);
   }
 
-  /// Envia uma nova foto de avatar para o Supabase Storage (bucket
-  /// `avatars`, que você precisa criar como público no painel:
-  /// Storage → New bucket → nome "avatars" → Public bucket = ON)
-  /// e retorna a URL pública para salvar em `avatar_url`.
+  /// Envia uma foto para o bucket público `avatars` e retorna sua URL.
   static Future<String> uploadAvatar(String userId, XFile imageFile) async {
-    final bytes = await imageFile.readAsBytes();
-    final fileExt = imageFile.name.split('.').last;
-    final filePath = '$userId/avatar.$fileExt';
+    final extension = imageFile.name.contains('.')
+        ? imageFile.name.split('.').last.toLowerCase()
+        : '';
+    final mimeType = _avatarMimeTypesByExtension[extension] ??
+        imageFile.mimeType?.toLowerCase();
+    if (mimeType == null ||
+        !_avatarMimeTypesByExtension.values.contains(mimeType)) {
+      throw const FormatException('Escolha uma foto JPG, PNG ou WEBP.');
+    }
 
-    await supabase.storage.from('avatars').uploadBinary(
+    final bytes = await imageFile.readAsBytes();
+    if (bytes.isEmpty) {
+      throw const FormatException('A imagem selecionada está vazia.');
+    }
+    if (bytes.length > _maxAvatarSizeBytes) {
+      throw const FormatException('A foto deve ter no máximo 5 MB.');
+    }
+
+    const bucket = 'avatars';
+    final filePath = '$userId/avatar';
+    await supabase.storage.from(bucket).uploadBinary(
           filePath,
           bytes,
-          fileOptions: const FileOptions(upsert: true),
+          fileOptions: FileOptions(
+            cacheControl: '3600',
+            upsert: true,
+            contentType: mimeType,
+          ),
         );
 
-    return supabase.storage.from('avatars').getPublicUrl(filePath);
+    final publicUrl = supabase.storage.from(bucket).getPublicUrl(filePath);
+    return '$publicUrl?v=${DateTime.now().microsecondsSinceEpoch}';
   }
 
   /// Usado na tela de busca de amigos: procura por nome de usuário exato

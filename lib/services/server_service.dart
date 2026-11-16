@@ -15,7 +15,8 @@ class ServerService {
         .order('joined_at');
 
     return rows
-        .map<ServerModel>((row) => ServerModel.fromMap(row['servers'] as Map<String, dynamic>))
+        .map<ServerModel>((row) =>
+            ServerModel.fromMap(row['servers'] as Map<String, dynamic>))
         .toList();
   }
 
@@ -63,8 +64,7 @@ class ServerService {
   }) async {
     await supabase
         .from('servers')
-        .update({'is_public': isPublic})
-        .eq('id', serverId);
+        .update({'is_public': isPublic}).eq('id', serverId);
   }
 
   static Future<String> createInvite(String serverId) async {
@@ -81,6 +81,24 @@ class ServerService {
       params: {'target_server_id': serverId},
     );
     return joinedServerId as String;
+  }
+
+  static Future<bool> joinPublicServerFromVoiceInvite({
+    required String serverId,
+    required String userId,
+  }) async {
+    final memberships = await supabase
+        .from('server_members')
+        .select('server_id')
+        .eq('server_id', serverId)
+        .eq('user_id', userId);
+    if (memberships.isNotEmpty) return true;
+
+    final publicServers = await fetchPublicServers();
+    if (!publicServers.any((server) => server.id == serverId)) return false;
+
+    await joinPublicServer(serverId);
+    return true;
   }
 
   static Future<String> joinServerWithInvite(String inviteCode) async {

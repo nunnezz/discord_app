@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/models.dart';
@@ -38,6 +40,7 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
+  late Future<Profile> _profileFuture;
 
   // Só usado quando !isOwnProfile — decide o que o botão de amizade mostra.
   Future<(FriendshipStatus, String?)>? _relationshipFuture;
@@ -46,9 +49,15 @@ class _ProfileScreenState extends State<ProfileScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _profileFuture = _fetchProfile();
     if (!widget.isOwnProfile) {
       _loadRelationship();
     }
+  }
+
+  Future<Profile> _fetchProfile() {
+    return ProfileService.fetchProfile(widget.userId)
+        .timeout(const Duration(seconds: 20));
   }
 
   void _loadRelationship() {
@@ -78,6 +87,8 @@ class _ProfileScreenState extends State<ProfileScreen>
       ),
       builder: (context) => _EditProfileSheet(profile: profile),
     );
+    if (!mounted) return;
+    setState(() => _profileFuture = _fetchProfile());
   }
 
   Future<void> _sendFriendRequest(Profile profile) async {
@@ -115,12 +126,38 @@ class _ProfileScreenState extends State<ProfileScreen>
         elevation: 0,
         title: const Text('Perfil'),
       ),
-      // StreamBuilder mantém a tela sempre sincronizada com o banco: se
-      // você editar o perfil em outro dispositivo, esta tela atualiza
-      // sozinha, sem precisar de F5 nem pull-to-refresh.
-      body: StreamBuilder<Profile>(
-        stream: ProfileService.watchMyProfile(widget.userId),
+      body: FutureBuilder<Profile>(
+        future: _profileFuture,
         builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Não foi possível carregar o perfil.',
+                      style: TextStyle(color: _C.textHeader),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${snapshot.error}',
+                      style: const TextStyle(color: _C.textMuted),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: () =>
+                          setState(() => _profileFuture = _fetchProfile()),
+                      child: const Text('Tentar novamente'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
           if (!snapshot.hasData) {
             return const Center(
               child: CircularProgressIndicator(color: _C.blurple),
@@ -359,6 +396,8 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
       TextEditingController(text: widget.profile.bio);
 
   XFile? _pickedImage;
+  Uint8List? _pickedImageBytes;
+  bool _pickingImage = false;
   bool _saving = false;
 
   @override
@@ -369,9 +408,35 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
   }
 
   Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final file = await picker.pickImage(source: ImageSource.gallery, maxWidth: 512);
-    if (file != null) setState(() => _pickedImage = file);
+    if (_saving || _pickingImage) return;
+    setState(() => _pickingImage = true);
+    try {
+      final file = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+      if (file == null) return;
+
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        throw const FormatException('A imagem selecionada está vazia.');
+      }
+      if (!mounted) return;
+      setState(() {
+        _pickedImage = file;
+        _pickedImageBytes = bytes;
+      });
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Não foi possível escolher a foto: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _pickingImage = false);
+    }
   }
 
   Future<void> _save() async {
@@ -408,6 +473,38 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
     }
   }
 
+  Widget _buildAvatarPreview() {
+    final bytes = _pickedImageBytes;
+    if (bytes != null) {
+      return ClipOval(
+        child: Image.memory(
+          bytes,
+          width: 80,
+          height: 80,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) =>
+              const Icon(Icons.person_rounded, color: Colors.white, size: 36),
+        ),
+      );
+    }
+
+    final avatarUrl = widget.profile.avatarUrl;
+    if (avatarUrl != null && avatarUrl.isNotEmpty) {
+      return ClipOval(
+        child: Image.network(
+          avatarUrl,
+          width: 80,
+          height: 80,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) =>
+              const Icon(Icons.person_rounded, color: Colors.white, size: 36),
+        ),
+      );
+    }
+
+    return const Icon(Icons.person_rounded, color: Colors.white, size: 36);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -425,18 +522,56 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
               style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           Center(
-            child: GestureDetector(
-              onTap: _pickImage,
-              child: CircleAvatar(
-                radius: 40,
-                backgroundColor: _C.blurple,
-                backgroundImage: _pickedImage != null
-                    ? null // preview via FutureBuilder seria ideal em produção
-                    : (widget.profile.avatarUrl != null
-                        ? NetworkImage(widget.profile.avatarUrl!)
-                        : null),
-                child: const Icon(Icons.camera_alt_rounded, color: Colors.white),
-              ),
+            child: Column(
+              children: [
+                GestureDetector(
+                  onTap: _pickingImage || _saving ? null : _pickImage,
+                  child: Stack(
+                    alignment: Alignment.bottomRight,
+                    children: [
+                      CircleAvatar(
+                        radius: 40,
+                        backgroundColor: _C.blurple,
+                        child: _buildAvatarPreview(),
+                      ),
+                      CircleAvatar(
+                        radius: 15,
+                        backgroundColor: _C.darker,
+                        child: Icon(
+                          _pickingImage ? Icons.hourglass_top_rounded : Icons.camera_alt_rounded,
+                          color: Colors.white,
+                          size: 16,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _pickingImage || _saving ? null : _pickImage,
+                  icon: _pickingImage
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.photo_library_outlined),
+                  label: Text(
+                    _pickingImage
+                        ? 'Carregando imagem...'
+                        : _pickedImage == null
+                            ? 'Escolher foto'
+                            : 'Trocar foto',
+                  ),
+                ),
+                if (_pickedImage != null)
+                  const Text(
+                    'A foto será salva ao tocar em Salvar.',
+                    style: TextStyle(color: _C.textMuted, fontSize: 12),
+                  ),
+              ],
             ),
           ),
           const SizedBox(height: 20),

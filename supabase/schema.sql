@@ -54,6 +54,9 @@ create table if not exists public.messages (
   server_id text not null default 'default',
   sender_id uuid not null references public.profiles(id) on delete cascade,
   content text not null,
+  media_path text,
+  media_type text check (media_type in ('image', 'video')),
+  media_name text,
   created_at timestamptz not null default now()
 );
 
@@ -80,11 +83,39 @@ create table if not exists public.direct_messages (
   conversation_id uuid not null references public.dm_conversations(id) on delete cascade,
   sender_id uuid not null references public.profiles(id) on delete cascade,
   content text not null,
+  media_path text,
+  media_type text check (media_type in ('image', 'video')),
+  media_name text,
+  expires_at timestamptz,
   created_at timestamptz not null default now()
 );
 
+create or replace function public.set_call_invite_expiration()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.content like 'VOICE_CALL_INVITE::%' then
+    new.expires_at := pg_catalog.now() + interval '24 hours';
+  else
+    new.expires_at := null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists direct_messages_set_call_invite_expiration
+  on public.direct_messages;
+create trigger direct_messages_set_call_invite_expiration
+before insert on public.direct_messages
+for each row
+execute function public.set_call_invite_expiration();
+
 create index if not exists idx_profiles_username on public.profiles (username);
 create index if not exists idx_messages_server_channel on public.messages (server_id, channel, created_at);
+create index if not exists messages_retention_created_at_idx on public.messages (created_at);
+create index if not exists direct_messages_retention_created_at_idx on public.direct_messages (created_at);
 create index if not exists idx_channels_server_position on public.channels (server_id, position);
 create index if not exists idx_friend_requests_receiver on public.friend_requests (receiver_id, status);
 create index if not exists idx_dm_conversations_users on public.dm_conversations (user_a, user_b);
@@ -398,3 +429,122 @@ revoke all on function public.join_server_with_invite(text) from public;
 grant execute on function public.create_server_invite(uuid) to authenticated;
 grant execute on function public.join_public_server(uuid) to authenticated;
 grant execute on function public.join_server_with_invite(text) to authenticated;
+
+insert into storage.buckets (
+  id,
+  name,
+  public,
+  file_size_limit,
+  allowed_mime_types
+)
+values (
+  'chat-media',
+  'chat-media',
+  false,
+  20971520,
+  array[
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'video/mp4',
+    'video/webm',
+    'video/quicktime'
+  ]
+)
+on conflict (id) do update
+set public = excluded.public,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "chat_media_insert_own" on storage.objects;
+create policy "chat_media_insert_own" on storage.objects
+for insert to authenticated
+with check (
+  bucket_id = 'chat-media'
+  and (storage.foldername(name))[1] = auth.uid()::text
+  and (metadata->>'mimetype') is not null
+  and (
+    (
+      (metadata->>'mimetype') like 'image/%'
+      and coalesce(
+        nullif(metadata->>'size', ''),
+        nullif(metadata->>'contentLength', '')
+      )::bigint <= 5242880
+    )
+    or (
+      (metadata->>'mimetype') like 'video/%'
+      and coalesce(
+        nullif(metadata->>'size', ''),
+        nullif(metadata->>'contentLength', '')
+      )::bigint <= 20971520
+    )
+  )
+);
+
+drop policy if exists "chat_media_select_message_participants" on storage.objects;
+create policy "chat_media_select_message_participants" on storage.objects
+for select to authenticated
+using (
+  bucket_id = 'chat-media'
+  and (
+    exists (select 1 from public.messages m where m.media_path = name)
+    or exists (
+      select 1 from public.direct_messages dm where dm.media_path = name
+    )
+  )
+);
+
+drop policy if exists "chat_media_delete_own" on storage.objects;
+create policy "chat_media_delete_own" on storage.objects
+for delete to authenticated
+using (
+  bucket_id = 'chat-media'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+insert into storage.buckets (
+  id,
+  name,
+  public,
+  file_size_limit,
+  allowed_mime_types
+)
+values (
+  'avatars',
+  'avatars',
+  true,
+  5242880,
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update
+set public = excluded.public,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "avatars_select_own" on storage.objects;
+create policy "avatars_select_own" on storage.objects
+for select to authenticated
+using (
+  bucket_id = 'avatars'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+drop policy if exists "avatars_insert_own" on storage.objects;
+create policy "avatars_insert_own" on storage.objects
+for insert to authenticated
+with check (
+  bucket_id = 'avatars'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+drop policy if exists "avatars_update_own" on storage.objects;
+create policy "avatars_update_own" on storage.objects
+for update to authenticated
+using (
+  bucket_id = 'avatars'
+  and (storage.foldername(name))[1] = auth.uid()::text
+)
+with check (
+  bucket_id = 'avatars'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);

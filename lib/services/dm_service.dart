@@ -1,4 +1,5 @@
 import '../models/models.dart';
+import 'chat_media_service.dart';
 import 'supabase_client.dart';
 
 // =========================================================================
@@ -17,7 +18,8 @@ class DmService {
 
   /// Lista as conversas do usuário logado, cada uma já com o perfil do
   /// OUTRO participante resolvido (nunca o meu próprio).
-  static Future<List<DmConversation>> fetchMyConversations(String myUserId) async {
+  static Future<List<DmConversation>> fetchMyConversations(
+      String myUserId) async {
     final rows = await supabase
         .from('dm_conversations')
         .select('id, user_a, user_b, created_at, '
@@ -42,50 +44,59 @@ class DmService {
     required String conversationId,
     required String senderId,
     required String content,
+    ChatMediaAttachment? attachment,
   }) async {
-    if (content.trim().isEmpty) return;
-    await supabase.from('direct_messages').insert({
-      'conversation_id': conversationId,
-      'sender_id': senderId,
-      'content': content.trim(),
-    });
+    if (content.trim().isEmpty && attachment == null) return;
+    try {
+      await supabase.from('direct_messages').insert({
+        'conversation_id': conversationId,
+        'sender_id': senderId,
+        'content': content.trim(),
+        'media_path': attachment?.path,
+        'media_type': attachment?.type,
+        'media_name': attachment?.fileName,
+      });
+    } catch (_) {
+      if (attachment != null) {
+        await ChatMediaService.remove(attachment.path);
+      }
+      rethrow;
+    }
   }
 
-  /// Mesmo padrão de cache leve do ChatService, mas separado por ser uma
-  /// tabela diferente.
-  static final Map<String, String> _usernameCache = {};
-
-  static Stream<List<DirectMessageModel>> watchConversation(String conversationId) {
+  static Stream<List<DirectMessageModel>> watchConversation(
+      String conversationId) {
     return supabase
         .from('direct_messages')
         .stream(primaryKey: ['id'])
         .eq('conversation_id', conversationId)
-        .asyncMap(_resolveSenderUsernames);
+        .asyncMap(_resolveSenderDisplayNames);
   }
 
-  static Future<List<DirectMessageModel>> _resolveSenderUsernames(
+  static Future<List<DirectMessageModel>> _resolveSenderDisplayNames(
       List<Map<String, dynamic>> rows) async {
-    final missingIds = rows
-        .map((r) => r['sender_id'] as String)
-        .toSet()
-        .where((id) => !_usernameCache.containsKey(id))
-        .toList();
+    final senderIds =
+        rows.map((r) => r['sender_id'] as String).toSet().toList();
 
-    if (missingIds.isNotEmpty) {
+    final profilesById = <String, Map<String, dynamic>>{};
+    if (senderIds.isNotEmpty) {
       final profiles = await supabase
           .from('profiles')
-          .select('id, username')
-          .inFilter('id', missingIds);
+          .select('id, display_name, username, avatar_url')
+          .inFilter('id', senderIds);
       for (final p in profiles) {
-        _usernameCache[p['id'] as String] = p['username'] as String;
+        profilesById[p['id'] as String] = p;
       }
     }
 
+    final mediaUrls = await ChatMediaService.createSignedUrls(
+      rows.map((row) => row['media_path'] as String?),
+    );
+
     return rows.map((row) {
       final enrichedRow = Map<String, dynamic>.from(row);
-      enrichedRow['profiles'] = {
-        'username': _usernameCache[row['sender_id']] ?? 'desconhecido',
-      };
+      enrichedRow['profiles'] = profilesById[row['sender_id'] as String];
+      enrichedRow['media_url'] = mediaUrls[row['media_path']];
       return DirectMessageModel.fromMap(enrichedRow);
     }).toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));

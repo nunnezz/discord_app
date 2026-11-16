@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'supabase_client.dart';
 
 // =========================================================================
@@ -49,6 +52,17 @@ class AuthService {
   /// qualquer outra exceção) para uma mensagem amigável em português.
   /// Centralizado aqui para não duplicar essa lógica em signUp/signIn.
   static String _friendlyErrorMessage(Object error) {
+    // Erros de rede / CORS / timeout — comuns no Flutter Web
+    if (error is SocketException) {
+      return 'Sem conexão com a internet. Verifique sua rede e tente novamente.';
+    }
+    if (error is HttpException) {
+      return 'Erro de conexão com o servidor. Tente novamente em alguns instantes.';
+    }
+    if (error is TimeoutException) {
+      return 'O servidor demorou demais para responder. Tente novamente.';
+    }
+
     if (error is AuthException) {
       final msg = error.message.toLowerCase();
 
@@ -87,6 +101,10 @@ class AuthService {
     // Erros de rede (sem internet, timeout, DNS, etc.) não são
     // AuthException — caem aqui. `error.runtimeType` ajuda a
     // diagnosticar em debug sem expor detalhes técnicos ao usuário.
+    final errorStr = error.toString();
+    if (errorStr.contains('decode') || errorStr.contains('CORS') || errorStr.contains('cross-origin')) {
+      return 'Erro de configuração do servidor. Verifique se as variáveis de ambiente (SUPABASE_URL e SUPABASE_ANON_KEY) estão configuradas no deploy.';
+    }
     return 'Não foi possível se conectar ao servidor. Verifique sua internet e tente novamente.';
   }
 

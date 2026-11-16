@@ -246,56 +246,68 @@ class VoiceCallService {
       );
     }
 
-    if (kIsWeb ||
-        defaultTargetPlatform == TargetPlatform.android ||
-        defaultTargetPlatform == TargetPlatform.iOS) {
-      await engine.startScreenCapture(
-        const ScreenCaptureParameters2(captureAudio: false, captureVideo: true),
-      );
-    } else if (defaultTargetPlatform == TargetPlatform.windows ||
-        defaultTargetPlatform == TargetPlatform.macOS) {
-      if (source?.sourceId == null) {
-        throw StateError('Selecione uma janela ou uma tela para compartilhar.');
-      }
-      const captureParams = ScreenCaptureParameters(
-        captureMouseCursor: true,
-        frameRate: 15,
-      );
-      final sourceId = source!.sourceId!;
-      if (source.type ==
-          ScreenCaptureSourceType.screencapturesourcetypeScreen) {
-        await engine.startScreenCaptureByDisplayId(
-          displayId: sourceId,
-          regionRect: const Rectangle(x: 0, y: 0, width: 0, height: 0),
-          captureParams: captureParams,
-        );
-      } else if (source.type ==
-          ScreenCaptureSourceType.screencapturesourcetypeWindow) {
-        await engine.startScreenCaptureByWindowId(
-          windowId: sourceId,
-          regionRect: const Rectangle(x: 0, y: 0, width: 0, height: 0),
-          captureParams: captureParams,
-        );
-      } else {
-        throw UnsupportedError('Esse tipo de compartilhamento não é aceito.');
-      }
-    } else {
-      throw UnsupportedError(
-        'Compartilhamento de tela não disponível nesta plataforma.',
-      );
-    }
-
-    if (_screenUid != uid) {
-      await engine.stopScreenCapture();
-      throw StateError('A conexão de compartilhamento não está preparada.');
-    }
     try {
+      if (kIsWeb ||
+          defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS) {
+        await engine.startScreenCapture(
+          const ScreenCaptureParameters2(captureAudio: false, captureVideo: true),
+        );
+      } else if (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.macOS) {
+        if (source?.sourceId == null) {
+          throw StateError('Selecione uma janela ou uma tela para compartilhar.');
+        }
+        const captureParams = ScreenCaptureParameters(
+          captureMouseCursor: true,
+          frameRate: 15,
+        );
+        final sourceId = source!.sourceId!;
+        if (source.type ==
+            ScreenCaptureSourceType.screencapturesourcetypeScreen) {
+          await engine.startScreenCaptureByDisplayId(
+            displayId: sourceId,
+            regionRect: const Rectangle(x: 0, y: 0, width: 0, height: 0),
+            captureParams: captureParams,
+          );
+        } else if (source.type ==
+            ScreenCaptureSourceType.screencapturesourcetypeWindow) {
+          await engine.startScreenCaptureByWindowId(
+            windowId: sourceId,
+            regionRect: const Rectangle(x: 0, y: 0, width: 0, height: 0),
+            captureParams: captureParams,
+          );
+        } else {
+          throw UnsupportedError('Esse tipo de compartilhamento não é aceito.');
+        }
+      } else {
+        throw UnsupportedError(
+          'Compartilhamento de tela não disponível nesta plataforma.',
+        );
+      }
+
+      if (_screenUid != uid) {
+        await engine.stopScreenCapture();
+        throw StateError('A conexão de compartilhamento não está preparada.');
+      }
+
       await _updateScreenPublishing(true);
-    } catch (_) {
+      _screenCaptureActive = true;
+    } on AgoraRtcException catch (e) {
+      await engine.stopScreenCapture();
+      if (e.code == -1) {
+        throw AgoraRtcException(
+          -1,
+          'Não foi possível iniciar o compartilhamento de tela. '
+          'Verifique se o navegador permitiu a captura de tela '
+          '(Chrome ou Edge funcionam melhor no localhost).',
+        );
+      }
+      rethrow;
+    } catch (e) {
       await engine.stopScreenCapture();
       rethrow;
     }
-    _screenCaptureActive = true;
   }
 
   Future<void> stopScreenShare() async {

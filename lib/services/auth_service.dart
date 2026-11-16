@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'supabase_client.dart';
@@ -52,17 +50,6 @@ class AuthService {
   /// qualquer outra exceção) para uma mensagem amigável em português.
   /// Centralizado aqui para não duplicar essa lógica em signUp/signIn.
   static String _friendlyErrorMessage(Object error) {
-    // Erros de rede / CORS / timeout — comuns no Flutter Web
-    if (error is SocketException) {
-      return 'Sem conexão com a internet. Verifique sua rede e tente novamente.';
-    }
-    if (error is HttpException) {
-      return 'Erro de conexão com o servidor. Tente novamente em alguns instantes.';
-    }
-    if (error is TimeoutException) {
-      return 'O servidor demorou demais para responder. Tente novamente.';
-    }
-
     if (error is AuthException) {
       final msg = error.message.toLowerCase();
 
@@ -83,9 +70,7 @@ class AuthService {
       if (msg.contains('email not confirmed')) {
         return 'Confirme seu e-mail antes de entrar. Verifique sua caixa de entrada (e o spam).';
       }
-      // Link de confirmação/recuperação expirado ou já usado. O Supabase
-      // chama isso de "OTP" internamente mesmo sendo um link por e-mail
-      // (o link contém um token de uso único com validade curta).
+      // Link de confirmação/recuperação expirado ou já usado.
       if (msg.contains('otp') && (msg.contains('expired') || msg.contains('invalid'))) {
         return 'Este link de confirmação expirou ou já foi usado. '
             'Peça um novo e-mail de confirmação e clique nele assim que chegar.';
@@ -94,13 +79,11 @@ class AuthService {
         return 'Este link de confirmação expirou ou já foi usado. '
             'Peça um novo e-mail de confirmação e clique nele assim que chegar.';
       }
-      // Fallback: mostra a mensagem original do Supabase, é melhor que nada.
+      // Fallback: mostra a mensagem original do Supabase.
       return error.message;
     }
 
-    // Erros de rede (sem internet, timeout, DNS, etc.) não são
-    // AuthException — caem aqui. `error.runtimeType` ajuda a
-    // diagnosticar em debug sem expor detalhes técnicos ao usuário.
+    // Erros genéricos (rede, CORS, decode, etc.) no Flutter Web
     final errorStr = error.toString();
     if (errorStr.contains('decode') || errorStr.contains('CORS') || errorStr.contains('cross-origin')) {
       return 'Erro de configuração do servidor. Verifique se as variáveis de ambiente (SUPABASE_URL e SUPABASE_ANON_KEY) estão configuradas no deploy.';

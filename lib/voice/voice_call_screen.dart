@@ -117,6 +117,11 @@ class VoiceCallScreen extends StatefulWidget {
   final String myDisplayName;
   final String? myAvatarUrl;
 
+  /// Chamado quando a chamada termina (desconectar) — a página host remove
+  /// o overlay. Substitui o Navigator.pop, porque a call agora vive como
+  /// overlay interno da página, não como rota.
+  final VoidCallback? onExit;
+
   const VoiceCallScreen({
     super.key,
     required this.channelName,
@@ -124,22 +129,68 @@ class VoiceCallScreen extends StatefulWidget {
     required this.myUserId,
     required this.myDisplayName,
     this.myAvatarUrl,
+    this.onExit,
   });
 
   @override
   State<VoiceCallScreen> createState() => _VoiceCallScreenState();
 }
 
+/// A chamada NÃO é mais aberta via rota — veja CordHomePage._activeCall.
+/// A função abaixo continua existindo só para compatibilidade de imports.
+
 Route<void> buildVoiceCallRoute(VoiceCallScreen screen) =>
-    PageRouteBuilder<void>(
-      opaque: false,
-      barrierColor: null,
-      barrierDismissible: false,
-      transitionDuration: Duration.zero,
-      reverseTransitionDuration: Duration.zero,
-      pageBuilder: (_, __, ___) => screen,
-      transitionsBuilder: (_, __, ___, child) => child,
-    );
+    _TransparentCallRoute(screen: screen);
+
+/// Rota transparente SEM ModalBarrier.
+///
+/// Toda PageRoute comum insere um ModalBarrier que absorve os toques da
+/// tela inteira — mesmo com `opaque: false` e `barrierColor: null`. Com a
+/// chamada minimizada, essa barreira invisível (no topo da pilha do
+/// Navigator) bloqueava TODOS os cliques no app por baixo.
+///
+/// Aqui a barreira não existe: quando a call está aberta, o Scaffold dela
+/// cobre a tela e recebe os toques naturalmente; quando minimizada, só o
+/// overlay flutuante é clicável e o resto passa para o app por baixo.
+class _TransparentCallRoute extends PageRoute<void> {
+  _TransparentCallRoute({required this.screen, super.settings});
+
+  final VoiceCallScreen screen;
+
+  @override
+  bool get opaque => false;
+
+  @override
+  bool get barrierDismissible => false;
+
+  @override
+  Color? get barrierColor => null;
+
+  @override
+  String? get barrierLabel => null;
+
+  @override
+  Duration get transitionDuration => Duration.zero;
+
+  @override
+  Duration get reverseTransitionDuration => Duration.zero;
+
+  @override
+  bool get maintainState => true;
+
+  @override
+  Widget buildPage(BuildContext context, Animation<double> animation,
+          Animation<double> secondaryAnimation) =>
+      screen;
+
+  @override
+  Widget buildModalBarrier() => const SizedBox.shrink();
+
+  @override
+  Widget buildTransitions(BuildContext context, Animation<double> animation,
+          Animation<double> secondaryAnimation, Widget child) =>
+      child;
+}
 
 class _VoiceCallScreenState extends State<VoiceCallScreen> {
   final VoiceCallService _voiceService = VoiceCallService();
@@ -216,8 +267,11 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
           await _trackPresence();
         },
         onScreenShareStateChanged: (sharing) async {
-          if (!mounted || _screenSharing == sharing) return;
-          setState(() => _screenSharing = sharing);
+          if (!mounted) return;
+          if (_screenSharing != sharing) setState(() => _screenSharing = sharing);
+          // Força reconstruir o tile de preview local — sem isso, o Agora
+          // às vezes não associa o VideoView ao stream de tela no web.
+          setState(() {});
           await _trackPresence();
         },
         onErrorOccurred: (description) {
@@ -451,7 +505,13 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
   Future<void> _disconnect() async {
     await _voiceService.leaveChannel();
     await supabase.removeChannel(_presenceChannel);
-    if (mounted) Navigator.of(context).pop();
+    if (mounted) {
+      if (widget.onExit != null) {
+        widget.onExit!();
+      } else {
+        Navigator.of(context).pop();
+      }
+    }
   }
 
   Future<void> _openInviteDialog() async {
@@ -467,10 +527,8 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
 
   @override
   void dispose() {
-    // Se o usuário fechar/voltar sem passar pelo botão de desconectar
-    // (ex: botão "voltar" do navegador), ainda assim liberamos o
-    // microfone/câmera e saímos do Presence — senão a pessoa continua
-    // "na sala" pros outros, mesmo tendo saído.
+    // Se o host remover o overlay sem passar pelo botão de desconectar,
+    // ainda assim liberamos o microfone/câmera e saímos do Presence.
     _voiceService.leaveChannel();
     supabase.removeChannel(_presenceChannel);
     super.dispose();
@@ -533,17 +591,12 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope<void>(
-      canPop: _isMinimized,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && !_isMinimized) {
-          setState(() => _isMinimized = true);
-        }
-      },
-      child: _isMinimized
-          ? _buildMinimizedCallOverlay(context)
-          : _buildCallScreen(),
-    );
+    // Sem PopScope: não somos uma rota. O botão "minimizar" apenas troca
+    // o layout — e, minimizado, este widget é um Stack pequeno no canto,
+    // deixando todo o resto do app clicável por baixo.
+    return _isMinimized
+        ? _buildMinimizedCallOverlay(context)
+        : _buildCallScreen();
   }
 
   Widget _buildCallScreen() {
@@ -668,6 +721,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
 
   Widget _buildMinimizedCallOverlay(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
+    // Stack cujo ÚNICO filho é o mini-player posicionado no canto. Um Stack
+    // só ocupa (e captura cliques) na área dos seus filhos — o resto do
+    // aplicativo por baixo permanece totalmente clicável.
     if (size.width < 600) {
       return Stack(
         children: [

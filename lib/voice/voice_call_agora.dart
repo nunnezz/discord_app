@@ -293,14 +293,19 @@ class VoiceCallService {
 
       await _updateScreenPublishing(true);
       _screenCaptureActive = true;
+      if (kIsWeb) {
+        // No web, dá um tempinho pro primeiro frame da captura chegar antes
+        // de renderizar o preview local, senão aparece o tile "sem nada".
+        await Future.delayed(const Duration(milliseconds: 800));
+      }
     } on AgoraRtcException catch (e) {
       await engine.stopScreenCapture();
       if (e.code == -1) {
         throw AgoraRtcException(
-          -1,
-          'Não foi possível iniciar o compartilhamento de tela. '
-          'Verifique se o navegador permitiu a captura de tela '
-          '(Chrome ou Edge funcionam melhor no localhost).',
+          code: -1,
+          message: 'Não foi possível iniciar o compartilhamento de tela. '
+              'Verifique se o navegador permitiu a captura de tela '
+              '(Chrome ou Edge funcionam melhor no localhost).',
         );
       }
       rethrow;
@@ -368,12 +373,17 @@ class VoiceCallService {
   /// Widget de vídeo local, para colocar no seu grid de participantes.
   Widget localVideoView({bool screenShare = false}) {
     if (_engine == null) return const SizedBox.shrink();
+    // No web, o stream de compartilhamento de tela É a track de vídeo
+    // principal (getDisplayMedia substitui a câmera) — `videoSourceScreen`
+    // não existe como fonte local lá, e o preview fica vazio. Por isso o
+    // preview do próprio compartilhamento precisa renderizar como câmera.
+    final useScreenSource = screenShare && !kIsWeb;
     return AgoraVideoView(
       controller: VideoViewController(
         rtcEngine: _engine!,
         canvas: VideoCanvas(
           uid: 0,
-          sourceType: screenShare
+          sourceType: useScreenSource
               ? VideoSourceType.videoSourceScreen
               : VideoSourceType.videoSourceCamera,
         ),

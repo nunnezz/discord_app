@@ -171,6 +171,13 @@ class CordHomePage extends StatefulWidget {
 class _CordHomePageState extends State<CordHomePage> {
   _NavArea navArea = _NavArea.server;
 
+  // Chamada de voz ativa renderizada como OVERLAY dentro desta página
+  // (Stack no build), em vez de rota no Navigator. Motivo: toda rota,
+  // mesmo transparente, coloca uma barreira de foco/hit-test acima do
+  // app; com a call minimizada isso impedia de usar o chat. Sem rota,
+  // minimizada = só o mini-player flutuante sobre o app normal.
+  VoiceCallScreen? _activeCall;
+
   // Servidor "Cord" fixo é sempre a opção inicial.
   String selectedServerId = kBuiltInServerId;
   List<ServerModel> myServers = [];
@@ -571,17 +578,57 @@ class _CordHomePageState extends State<CordHomePage> {
     }
 
     if (!mounted) return;
-    await Navigator.of(context).push<void>(
-      buildVoiceCallRoute(
-        VoiceCallScreen(
-          channelName: displayName ?? channelName,
-          roomId: '$selectedServerId::$channelName',
-          myUserId: widget.userId,
-          myDisplayName: profile?.displayName ?? 'Você',
-          myAvatarUrl: profile?.avatarUrl,
-        ),
-      ),
-    );
+    setState(() {
+      _activeCall = VoiceCallScreen(
+        channelName: displayName ?? channelName,
+        roomId: '$selectedServerId::$channelName',
+        myUserId: widget.userId,
+        myDisplayName: profile?.displayName ?? 'Você',
+        myAvatarUrl: profile?.avatarUrl,
+        onExit: () => setState(() => _activeCall = null),
+      );
+    });
+  }
+
+  /// Abre a chamada a partir de um convite recebido por DM (usado pelo
+  /// _VoiceInviteCard, que vive numa subárvore e não tem acesso direto ao
+  /// setState desta página).
+  void _openVoiceInvite({
+    required String roomId,
+    required String channelName,
+    String? fallbackName,
+    String? avatarUrl,
+  }) {
+    final myUserId = widget.userId;
+    Profile? profile;
+    ProfileService.fetchProfile(myUserId)
+        .then((p) {
+          profile = p;
+          if (!mounted) return;
+          setState(() {
+            _activeCall = VoiceCallScreen(
+              channelName: channelName,
+              roomId: roomId,
+              myUserId: myUserId,
+              myDisplayName: profile?.displayName ?? fallbackName ?? 'Você',
+              myAvatarUrl: profile?.avatarUrl ?? avatarUrl,
+              onExit: () => setState(() => _activeCall = null),
+            );
+          });
+        })
+        .catchError((_) {
+          if (!mounted) return;
+          setState(() {
+            _activeCall = VoiceCallScreen(
+              channelName: channelName,
+              roomId: roomId,
+              myUserId: myUserId,
+              myDisplayName: fallbackName ?? 'Você',
+              myAvatarUrl: avatarUrl,
+              onExit: () => setState(() => _activeCall = null),
+            );
+          });
+        });
   }
 
   /// Abre a conversa com um amigo (busca ou cria) e já muda o foco para
@@ -613,9 +660,20 @@ class _CordHomePageState extends State<CordHomePage> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final bool isMobile = constraints.maxWidth < _mobileBreakpoint;
-        return isMobile
+        final page = isMobile
             ? _buildMobileLayout(context)
             : _buildDesktopLayout(context, constraints.maxWidth);
+        final call = _activeCall;
+        if (call == null) return page;
+        // A call vive num Stack POR CIMA da página (não numa rota). Cheia
+        // = cobre tudo; minimizada = só o mini-player no canto, e todo o
+        // resto do app por baixo continua 100% clicável.
+        return Stack(
+          children: [
+            Positioned.fill(child: page),
+            Positioned.fill(child: call),
+          ],
+        );
       },
     );
   }
@@ -2294,29 +2352,20 @@ class _VoiceInviteCardState extends State<_VoiceInviteCard> {
       profileNotice = 'Não foi possível carregar seu perfil na chamada: $error';
     }
     if (!context.mounted) return;
-    await Navigator.of(context).push<void>(
-      buildVoiceCallRoute(
-        VoiceCallScreen(
-          channelName: widget.channelName,
-          roomId: widget.roomId,
-          myUserId: widget.myUserId,
-          myDisplayName: profile?.displayName ?? 'Você',
-          myAvatarUrl: profile?.avatarUrl,
-        ),
-      ),
+    context.findAncestorStateOfType<_CordHomePageState>()?._openVoiceInvite(
+      roomId: widget.roomId,
+      channelName: widget.channelName,
+      fallbackName: profile?.displayName,
+      avatarUrl: profile?.avatarUrl,
     );
-    if (!context.mounted) return;
     if (joinedServer) {
-      await widget.onPublicServerJoined();
       if (!context.mounted) return;
+      await widget.onPublicServerJoined();
     }
-    final notices = [
-      if (membershipNotice != null) membershipNotice,
-      if (profileNotice != null) profileNotice,
-    ];
-    if (notices.isNotEmpty) {
+    if (membershipNotice != null || profileNotice != null) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(notices.join('\n'))),
+        SnackBar(content: Text([membershipNotice, profileNotice].whereType<String>().join('\n'))),
       );
     }
   }

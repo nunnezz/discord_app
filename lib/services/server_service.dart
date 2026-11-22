@@ -119,4 +119,48 @@ class ServerService {
 
     return rows.map<ServerChannelModel>(ServerChannelModel.fromMap).toList();
   }
+
+  /// Cria um canal novo (texto ou voz) no servidor. O `name` é o nome
+  /// exibido — o mesmo valor é usado como chave do chat/voz.
+  static Future<void> createChannel({
+    required String serverId,
+    required String name,
+    required bool isVoice,
+  }) async {
+    // Descobre a próxima posição livre dentro do tipo, pra o canal novo
+    // aparecer por último na lista da categoria dele.
+    final existing = await supabase
+        .from('channels')
+        .select('position')
+        .eq('server_id', serverId)
+        .eq('type', isVoice ? 'voice' : 'text');
+    int maxPosition = -1;
+    for (final row in existing) {
+      final p = (row['position'] as num?)?.toInt() ?? 0;
+      if (p > maxPosition) maxPosition = p;
+    }
+
+    await supabase.from('channels').insert({
+      'server_id': serverId,
+      'name': name.trim(),
+      'type': isVoice ? 'voice' : 'text',
+      'position': maxPosition + 1,
+    });
+  }
+
+  /// Renomeia um canal existente.
+  static Future<void> renameChannel({
+    required String channelId,
+    required String newName,
+  }) async {
+    await supabase
+        .from('channels')
+        .update({'name': newName.trim()}).eq('id', channelId);
+  }
+
+  /// Exclui um canal. As mensagens antigas continuam no banco (chaveadas
+  /// pelo nome do canal), mas ficam inacessíveis pela UI.
+  static Future<void> deleteChannel(String channelId) async {
+    await supabase.from('channels').delete().eq('id', channelId);
+  }
 }

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import '../models/models.dart';
 import '../services/friend_service.dart';
 import '../services/profile_service.dart';
@@ -156,7 +156,7 @@ class _FoundProfileTile extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.2),
+        color: Colors.black.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(

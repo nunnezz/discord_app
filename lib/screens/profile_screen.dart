@@ -1,21 +1,32 @@
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/models.dart';
 import '../services/friend_service.dart';
 import '../services/profile_service.dart';
 import '../services/supabase_client.dart';
 
-// Cores reaproveitadas do tema Cord — ajuste o import se você já tem
-// essas constantes centralizadas em outro arquivo (ex: CordColors).
+// Paleta clara compartilhada com o design system do chat (cord_home_page).
 class _C {
-  static const bg = Color(0xFF313338);
-  static const darker = Color(0xFF2B2D31);
-  static const blurple = Color(0xFF5865F2);
-  static const green = Color(0xFF23A55A);
-  static const textMuted = Color(0xFF949BA4);
-  static const textHeader = Color(0xFFF2F3F5);
+  static const bg = Color(0xFFF8FAFC); // fundo do app (slate-50)
+  static const darker = Color(0xFFFFFFFF); // superfícies/cards
+  static const blurple = Color(0xFF6366F1); // deep indigo (acento primário)
+  static const violet = Color(0xFF8B5CF6);
+  static const green = Color(0xFF0EA5E9);
+  static const textNormal = Color(0xFF334155);
+  static const textMuted = Color(0xFF64748B);
+  static const textHeader = Color(0xFF0F172A);
+  static const divider = Color(0xFFE2E8F0);
+  static const red = Color(0xFFE11D48);
+
+  static List<BoxShadow> get softShadow => [
+        BoxShadow(
+          color: const Color(0xFF0F172A).withOpacity(0.06),
+          blurRadius: 18,
+          offset: const Offset(0, 6),
+        ),
+      ];
 }
 
 /// Tela de perfil do usuário logado (ou de outro usuário, em modo leitura).
@@ -121,10 +132,15 @@ class _ProfileScreenState extends State<ProfileScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _C.bg,
+      // HEADER claro: seta de voltar + título integrados numa barra
+      // translúcida, sem aparência de app escuro legado.
       appBar: AppBar(
-        backgroundColor: _C.bg,
+        backgroundColor: Colors.white.withOpacity(0.72),
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Perfil'),
+        foregroundColor: _C.textHeader,
+        title: const Text('Perfil',
+            style: TextStyle(fontWeight: FontWeight.w700)),
       ),
       body: FutureBuilder<Profile>(
         future: _profileFuture,
@@ -164,80 +180,131 @@ class _ProfileScreenState extends State<ProfileScreen>
             );
           }
           final profile = snapshot.data!;
-          return Column(
+          return ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             children: [
-              const SizedBox(height: 24),
-              CircleAvatar(
-                radius: 48,
-                backgroundColor: _C.blurple,
-                backgroundImage:
-                    profile.avatarUrl != null ? NetworkImage(profile.avatarUrl!) : null,
-                child: profile.avatarUrl == null
-                    ? Text(
-                        profile.displayName.isNotEmpty
-                            ? profile.displayName[0].toUpperCase()
-                            : '?',
-                        style: const TextStyle(color: Colors.white, fontSize: 32),
+              // ---------------- CARTÃO DE PERFIL (glass) ----------------
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.8),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.white.withOpacity(0.6)),
+                  boxShadow: _C.softShadow,
+                ),
+                child: Column(
+                  children: [
+                    // Avatar com anel refinado (borda dupla).
+                    Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: _C.blurple, width: 2.5),
+                      ),
+                      child: CircleAvatar(
+                        radius: 46,
+                        backgroundColor: _C.blurple,
+                        backgroundImage: profile.avatarUrl != null
+                            ? NetworkImage(profile.avatarUrl!)
+                            : null,
+                        child: profile.avatarUrl == null
+                            ? Text(
+                                profile.displayName.isNotEmpty
+                                    ? profile.displayName[0].toUpperCase()
+                                    : '?',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 30,
+                                    fontWeight: FontWeight.w700),
+                              )
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      profile.displayName,
+                      style: const TextStyle(
+                        color: _C.textHeader,
+                        fontSize: 21,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '@${profile.username}',
+                      style: const TextStyle(color: _C.textMuted, fontSize: 13.5),
+                    ),
+                    if (profile.bio.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        profile.bio,
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: _C.textMuted, fontSize: 13, height: 1.4),
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    if (widget.isOwnProfile)
+                      // BOTÃO PÍLULA moderno com acento indigo (StadiumBorder).
+                      ElevatedButton.icon(
+                        onPressed: () => _openEditSheet(profile),
+                        icon: const Icon(Icons.edit_rounded,
+                            size: 16, color: Colors.white),
+                        label: const Text('Editar perfil',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _C.blurple,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 22, vertical: 12),
+                          shape: const StadiumBorder(),
+                        ),
                       )
-                    : null,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                profile.displayName,
-                style: const TextStyle(
-                  color: _C.textHeader,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+                    else
+                      _FriendActionButton(
+                        profile: profile,
+                        relationshipFuture: _relationshipFuture,
+                        onSendRequest: () => _sendFriendRequest(profile),
+                        onRespond: _respondToRequest,
+                      ),
+                  ],
                 ),
               ),
-              Text(
-                '@${profile.username}',
-                style: const TextStyle(color: _C.textMuted, fontSize: 14),
-              ),
-              const SizedBox(height: 8),
-              if (profile.bio.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                  child: Text(
-                    profile.bio,
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: _C.textMuted, fontSize: 13),
+              const SizedBox(height: 20),
+              // ---------------- TABS (indicador em pill) ----------------
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.6),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: _C.divider),
+                ),
+                child: TabBar(
+                  controller: _tabController,
+                  labelColor: _C.textHeader,
+                  unselectedLabelColor: _C.textMuted,
+                  labelStyle: const TextStyle(fontWeight: FontWeight.w700),
+                  unselectedLabelStyle:
+                      const TextStyle(fontWeight: FontWeight.w500),
+                  indicator: BoxDecoration(
+                    color: _C.blurple.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(14),
                   ),
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  dividerColor: Colors.transparent,
+                  tabs: const [
+                    Tab(height: 42, text: 'Principal'),
+                    Tab(height: 42, text: 'Lista de desejos'),
+                  ],
                 ),
-              const SizedBox(height: 16),
-              if (widget.isOwnProfile)
-                OutlinedButton.icon(
-                  onPressed: () => _openEditSheet(profile),
-                  icon: const Icon(Icons.edit_rounded, size: 16, color: Colors.white),
-                  label: const Text('Editar perfil',
-                      style: TextStyle(color: Colors.white)),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: _C.textMuted),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20)),
-                  ),
-                )
-              else
-                _FriendActionButton(
-                  profile: profile,
-                  relationshipFuture: _relationshipFuture,
-                  onSendRequest: () => _sendFriendRequest(profile),
-                  onRespond: _respondToRequest,
-                ),
-              const SizedBox(height: 16),
-              TabBar(
-                controller: _tabController,
-                labelColor: Colors.white,
-                unselectedLabelColor: _C.textMuted,
-                indicatorColor: _C.blurple,
-                tabs: const [
-                  Tab(text: 'Principal'),
-                  Tab(text: 'Lista de desejos'),
-                ],
               ),
-              Expanded(
+              const SizedBox(height: 16),
+              SizedBox(
+                height: 320,
                 child: TabBarView(
                   controller: _tabController,
                   children: [
@@ -260,21 +327,39 @@ class _MainTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const Text('Sobre mim',
-            style: TextStyle(color: _C.textMuted, fontSize: 12, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 6),
-        Text(
-          profile.bio.isEmpty ? 'Este usuário ainda não escreveu uma bio.' : profile.bio,
-          style: TextStyle(
-            color: profile.bio.isEmpty ? _C.textMuted : Colors.white,
-            fontStyle: profile.bio.isEmpty ? FontStyle.italic : FontStyle.normal,
-            height: 1.4,
+    // "Sobre mim" em seu próprio card arredondado com padding generoso.
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.8),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.6)),
+        boxShadow: _C.softShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Sobre mim',
+              style: TextStyle(
+                  color: _C.textMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5)),
+          const SizedBox(height: 8),
+          Text(
+            profile.bio.isEmpty
+                ? 'Este usuário ainda não escreveu uma bio.'
+                : profile.bio,
+            style: TextStyle(
+              color: profile.bio.isEmpty ? _C.textMuted : _C.textHeader,
+              fontStyle:
+                  profile.bio.isEmpty ? FontStyle.italic : FontStyle.normal,
+              height: 1.45,
+              fontSize: 14,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -328,9 +413,9 @@ class _FriendActionButton extends StatelessWidget {
 
         switch (status) {
           case FriendshipStatus.friends:
-            return Chip(
-              avatar: const Icon(Icons.check_circle_rounded, color: _C.green, size: 18),
-              label: const Text('Vocês são amigos', style: TextStyle(color: Colors.white)),
+            return const Chip(
+              avatar: Icon(Icons.check_circle_rounded, color: _C.green, size: 18),
+              label: Text('Vocês são amigos', style: TextStyle(color: Colors.white)),
               backgroundColor: _C.darker,
             );
 

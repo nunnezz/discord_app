@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'config/app_config.dart';
+import 'services/realtime_lifecycle_service.dart';
 import 'services/supabase_client.dart';
 import 'services/auth_service.dart';
 import 'auth/auth_screen.dart';
@@ -13,6 +14,11 @@ Future<void> main() async {
 
   await AppConfig.load();
   await initSupabase();
+
+  // Liga o gerenciamento inteligente de conexões Realtime: libera vagas
+  // do limite de 200 conexões do plano free desconectando usuários com
+  // aba oculta >30s ou inativos >5min (ver realtime_lifecycle_service).
+  RealtimeLifecycleService.instance.init();
 
   runApp(const CordApp());
 }
@@ -26,9 +32,22 @@ class CordApp extends StatelessWidget {
       title: 'Cord',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF313338),
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
         useMaterial3: true,
+        // Tipografia moderna (Inter quando disponível no dispositivo,
+        // fallback da plataforma caso contrário) e hierarquia limpa.
+        fontFamily: 'Inter',
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF6366F1), // deep indigo
+          brightness: Brightness.light,
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xCCFFFFFF),
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          foregroundColor: Color(0xFF0F172A),
+        ),
       ),
       home: const AuthGate(),
     );

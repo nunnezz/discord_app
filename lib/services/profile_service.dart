@@ -24,12 +24,36 @@ class ProfileService {
 
   /// Stream em tempo real do MEU PRÓPRIO perfil — útil para refletir na
   /// hora qualquer edição feita (inclusive de outro dispositivo logado).
-  static Stream<Profile> watchMyProfile(String userId) {
-    return supabase
-        .from('profiles')
-        .stream(primaryKey: ['id'])
-        .eq('id', userId)
-        .map((rows) => Profile.fromMap(rows.first));
+  ///
+  /// A stream do Supabase pode chegar VAZIA em alguns momentos (snapshot
+  /// inicial do realtime, ou flutuação de RLS) — se aplicarmos `rows.first`
+  /// direto, isso vira um erro no StreamBuilder e o rodapé do usuário fica
+  /// eternamente no "...". Por isso: busca o perfil por HTTP como fallback
+  /// quando a stream não traz linha, e ignora eventos vazios enquanto
+  /// já temos dados.
+  static Stream<Profile> watchMyProfile(String userId) async* {
+    Profile? lastKnown;
+    // Primeiro dado imediato (HTTP), para a UI nunca começar vazia.
+    try {
+      lastKnown = await fetchProfile(userId);
+      yield lastKnown;
+    } catch (_) {
+      // Segue sem dado inicial — a stream abaixo pode trazer depois.
+    }
+    await for (final rows
+        in supabase.from('profiles').stream(primaryKey: ['id']).eq('id', userId)) {
+      if (rows.isEmpty) {
+        if (lastKnown != null) yield lastKnown; // mantém o último conhecido
+        continue;
+      }
+      try {
+        lastKnown = Profile.fromMap(rows.first);
+        yield lastKnown;
+      } catch (_) {
+        // Linha malformada — mantém o último conhecido.
+        if (lastKnown != null) yield lastKnown;
+      }
+    }
   }
 
   /// Salva as alterações feitas na tela "Editar perfil".

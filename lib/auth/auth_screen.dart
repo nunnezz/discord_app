@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import '../services/auth_service.dart';
 
 class _C {
@@ -177,7 +177,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFDA373C).withOpacity(0.15),
+                          color: const Color(0xFFDA373C).withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(color: const Color(0xFFDA373C)),
                         ),

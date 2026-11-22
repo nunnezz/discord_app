@@ -28,16 +28,26 @@ class DmService {
         .or('user_a.eq.$myUserId,user_b.eq.$myUserId')
         .order('created_at', ascending: false);
 
-    return rows.map<DmConversation>((row) {
+    final conversations = <DmConversation>[];
+    final seenUsers = <String>{}; // ids de usuários já exibidos
+    for (final row in rows) {
       final isUserA = row['user_a'] == myUserId;
       final otherProfileMap = (isUserA ? row['profile_b'] : row['profile_a'])
           as Map<String, dynamic>;
-      return DmConversation(
+      final otherUser = Profile.fromMap(otherProfileMap);
+      // O banco aceita conversas duplicadas com o mesmo usuário (a RPC
+      // `get_or_create_dm_conversation` pode ser chamada duas vezes em
+      // corrida, e o par invertido user_a/user_b também escapa da UNIQUE).
+      // Aqui mostramos só UMA linha por pessoa — a conversa mais recente
+      // (as linhas já vêm ordenadas por created_at desc).
+      if (!seenUsers.add(otherUser.id)) continue;
+      conversations.add(DmConversation(
         id: row['id'] as String,
-        otherUser: Profile.fromMap(otherProfileMap),
+        otherUser: otherUser,
         createdAt: DateTime.parse(row['created_at'] as String).toLocal(),
-      );
-    }).toList();
+      ));
+    }
+    return conversations;
   }
 
   static Future<void> sendMessage({

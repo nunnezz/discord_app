@@ -1,5 +1,5 @@
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 // =========================================================================
 // CHAMADA DE VOZ/VÍDEO MULTIUSUÁRIO — Agora RTC Engine

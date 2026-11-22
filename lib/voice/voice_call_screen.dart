@@ -1,6 +1,6 @@
 import 'dart:math';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -153,7 +153,7 @@ Route<void> buildVoiceCallRoute(VoiceCallScreen screen) =>
 /// cobre a tela e recebe os toques naturalmente; quando minimizada, só o
 /// overlay flutuante é clicável e o resto passa para o app por baixo.
 class _TransparentCallRoute extends PageRoute<void> {
-  _TransparentCallRoute({required this.screen, super.settings});
+  _TransparentCallRoute({required this.screen});
 
   final VoiceCallScreen screen;
 
@@ -895,7 +895,7 @@ class _CallTopBar extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: (connecting ? Colors.orange : _C.green).withOpacity(0.15),
+              color: (connecting ? Colors.orange : _C.green).withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: connecting ? Colors.orange : _C.green),
             ),
@@ -1008,7 +1008,7 @@ class _ParticipantTile extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.55),
+                color: Colors.black.withValues(alpha: 0.55),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Row(

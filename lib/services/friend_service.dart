@@ -114,10 +114,16 @@ class FriendService {
         .eq('receiver_id', myUserId)
         .eq('status', 'accepted');
 
-    final friends = [
-      ...sentRows.map((r) => Profile.fromMap(r['profiles'] as Map<String, dynamic>)),
-      ...receivedRows.map((r) => Profile.fromMap(r['profiles'] as Map<String, dynamic>)),
-    ];
+    final friends = <Profile>[];
+    final seenIds = <String>{};
+    for (final r in [...sentRows, ...receivedRows]) {
+      final profile = Profile.fromMap(r['profiles'] as Map<String, dynamic>);
+      // Um par pode ter DOIS pedidos accepted (A→B e B→A, criados antes de
+      // existir bloqueio), o que faria o mesmo amigo aparecer 2x. Uma linha
+      // por pessoa — a primeira ocorrência vence.
+      if (!seenIds.add(profile.id)) continue;
+      friends.add(profile);
+    }
 
     friends.sort((a, b) => a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
     return friends;

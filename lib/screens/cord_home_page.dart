@@ -1,6 +1,7 @@
 import 'dart:async';
+import 'dart:ui' show ImageFilter;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
@@ -14,26 +15,50 @@ import '../services/chat_media_service.dart';
 import '../services/dm_service.dart';
 import '../services/friend_service.dart';
 import '../services/profile_service.dart';
+import '../services/realtime_lifecycle_service.dart';
 import '../services/server_service.dart';
 import '../voice/voice_call_screen.dart';
 import 'profile_screen.dart';
+import 'settings_screen.dart';
 
 // =========================================================================
-// PALETA (mesmo esquema de cor usado nas outras telas do Cord)
+// PALETA — DESIGN SYSTEM LIGHT (Deep Indigo/Violet, estética Linear/Vercel)
 // =========================================================================
+// Neutros frios, acento indigo sofisticado, sem nenhum verde estilo
+// mensageiro. Os NOMES das constantes foram mantidos (darkest, darker,
+// blurple...) de propósito: toda a UI existente referencia _C e é
+// re-estilizada automaticamente ao trocar os valores aqui.
 class _C {
-  static const darkest = Color(0xFF1E1F22);
-  static const darker = Color(0xFF2B2D31);
-  static const chatBg = Color(0xFF313338);
-  static const inputBg = Color(0xFF383A40);
-  static const hoverChannel = Color(0xFF35373C);
-  static const activeChannel = Color(0xFF404249);
-  static const blurple = Color(0xFF5865F2);
-  static const green = Color(0xFF23A55A);
-  static const textNormal = Color(0xFFDBDEE1);
-  static const textMuted = Color(0xFF949BA4);
-  static const textHeader = Color(0xFFF2F3F5);
-  static const divider = Color(0xFF3F4147);
+  // Fundos — neutros frios bem claros.
+  static const darkest = Color(0xFFF8FAFC); // fundo do app (slate-50)
+  static const darker = Color(0xFFFFFFFF); // sidebars / painéis
+  static const chatBg = Color(0xFFF8FAFC); // área de chat
+  static const inputBg = Color(0xFFFFFFFF); // campos de texto / cards
+
+  // Estados de interação (tint indigo suave).
+  static const hoverChannel = Color(0xFFF1F5F9); // slate-100
+  static const activeChannel = Color(0xFFE8EAFD); // indigo tint
+
+  // ACENTO: deep indigo/violet (estilo Linear).
+  static const blurple = Color(0xFF6366F1);
+  static const mintSoft = Color(0xFFEEF0FE); // tint p/ bolhas enviadas
+  static const violet = Color(0xFF8B5CF6); // secundário p/ gradientes
+
+  static const green = Color(0xFF0EA5E9); // "sucesso" agora é sky blue
+  static const textNormal = Color(0xFF334155); // slate-700
+  static const textMuted = Color(0xFF64748B); // slate-500
+  static const textHeader = Color(0xFF0F172A); // slate-900
+  static const divider = Color(0xFFE2E8F0); // slate-200
+  static const red = Color(0xFFE11D48);
+
+  // Sombras difusas (neumorphism suave) para cards flutuantes.
+  static List<BoxShadow> get softShadow => [
+        BoxShadow(
+          color: const Color(0xFF0F172A).withOpacity(0.06),
+          blurRadius: 18,
+          offset: const Offset(0, 6),
+        ),
+      ];
 }
 
 class _ChatAvatar extends StatelessWidget {
@@ -97,7 +122,11 @@ class ChannelDef {
   final ChannelType type;
   final String? displayName;
 
-  const ChannelDef(this.name, this.type, {this.displayName});
+  /// Id da linha na tabela `channels` (null = canal estático do servidor
+  /// "Cord", que não vive no banco e por isso não pode ser editado).
+  final String? id;
+
+  const ChannelDef(this.name, this.type, {this.displayName, this.id});
 
   String get label => displayName ?? name;
 }
@@ -131,11 +160,11 @@ List<CategoryDef> _categoriesFromServerChannels(
     List<ServerChannelModel> channels) {
   final textChannels = channels
       .where((c) => c.type == ServerChannelType.text)
-      .map((c) => ChannelDef(c.name, ChannelType.text))
+      .map((c) => ChannelDef(c.name, ChannelType.text, id: c.id))
       .toList();
   final voiceChannels = channels
       .where((c) => c.type == ServerChannelType.voice)
-      .map((c) => ChannelDef(c.name, ChannelType.voice))
+      .map((c) => ChannelDef(c.name, ChannelType.voice, id: c.id))
       .toList();
   return [
     CategoryDef('CANAIS DE TEXTO', textChannels),
@@ -301,6 +330,23 @@ class _CordHomePageState extends State<CordHomePage> {
         setState(() => loadingChannels = false);
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Erro ao carregar canais: $e')));
+      }
+    }
+  }
+
+  /// Recarrega os canais do servidor selecionado (após criar/renomear/
+  /// excluir um canal). Não mexe no canal selecionado — só atualiza a lista.
+  Future<void> _loadChannels() async {
+    final serverId = selectedServerId;
+    if (serverId == kBuiltInServerId) return;
+    try {
+      final channels = await ServerService.fetchChannels(serverId);
+      if (!mounted) return;
+      setState(() => currentCategories = _categoriesFromServerChannels(channels));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao recarregar canais: $e')));
       }
     }
   }
@@ -631,6 +677,148 @@ class _CordHomePageState extends State<CordHomePage> {
         });
   }
 
+  // =========================================================================
+  // GESTÃO DE CANAIS (só para o dono do servidor selecionado)
+  // =========================================================================
+  bool get _canManageChannels =>
+      selectedServerId != kBuiltInServerId &&
+      _activeServer?.ownerId == widget.userId;
+
+  bool _isVoiceCategoryTitle(String title) =>
+      title.toUpperCase().contains('VOZ');
+
+  Future<void> _createChannelInCategory(ChannelType type) async {
+    final serverId = selectedServerId;
+    if (serverId == kBuiltInServerId) return;
+    final name = await _promptChannelName(
+      title: type == ChannelType.voice
+          ? 'Criar canal de voz'
+          : 'Criar canal de texto',
+      hint: type == ChannelType.voice
+          ? 'Ex: Sala de Jogos'
+          : 'Ex: bate-papo-geral',
+    );
+    if (name == null || name.trim().isEmpty) return;
+    try {
+      await ServerService.createChannel(
+        serverId: serverId,
+        name: name,
+        isVoice: type == ChannelType.voice,
+      );
+      await _loadChannels();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao criar canal: $e')));
+      }
+    }
+  }
+
+  Future<void> _renameChannel(ChannelDef channel) async {
+    if (channel.id == null) return;
+    final newName = await _promptChannelName(
+      title: 'Renomear canal',
+      hint: channel.label,
+      initialText: channel.name,
+    );
+    if (newName == null || newName.trim().isEmpty) return;
+    try {
+      await ServerService.renameChannel(
+        channelId: channel.id!,
+        newName: newName,
+      );
+      await _loadChannels();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao renomear canal: $e')));
+      }
+    }
+  }
+
+  Future<void> _deleteChannel(ChannelDef channel) async {
+    if (channel.id == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: _C.darker,
+        title: const Text('Excluir canal',
+            style: TextStyle(color: _C.textHeader)),
+        content: Text(
+          'Excluir "${channel.label}"? As mensagens dele ficam no histórico, mas o canal some para todo mundo.',
+          style: const TextStyle(color: _C.textMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Excluir',
+                style: TextStyle(color: _C.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ServerService.deleteChannel(channel.id!);
+      await _loadChannels();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao excluir canal: $e')));
+      }
+    }
+  }
+
+  /// Diálogo com campo de texto para pedir o nome do canal. Retorna null
+  /// se o usuário cancelar.
+  Future<String?> _promptChannelName({
+    required String title,
+    String? hint,
+    String? initialText,
+  }) {
+    final controller = TextEditingController(text: initialText);
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: _C.darker,
+        title: Text(title, style: const TextStyle(color: _C.textHeader)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 40,
+          style: const TextStyle(color: _C.textNormal),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(color: _C.textMuted),
+            filled: true,
+            fillColor: _C.inputBg,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: BorderSide.none,
+            ),
+          ),
+          onSubmitted: (value) =>
+              Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('Salvar', style: TextStyle(color: _C.blurple)),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Abre a conversa com um amigo (busca ou cria) e já muda o foco para
   /// a área de Amigos, exibindo o chat dessa conversa como conteúdo
   /// principal — igual ao Discord quando você clica no ícone de
@@ -679,94 +867,125 @@ class _CordHomePageState extends State<CordHomePage> {
   }
 
   // -----------------------------------------------------------------
-  // DESKTOP: 3 colunas — [Home/servidores] / [canais OU amigos] / [chat]
+  // DESKTOP: navbar superior + 2 colunas [drawer de canais/DMs] [chat]
   // -----------------------------------------------------------------
   Widget _buildDesktopLayout(BuildContext context, double availableWidth) {
     // Largura da 2ª coluna se adapta em vez de ser fixa em todos os
     // tamanhos: em janelas/tablets mais estreitos (ex: split-screen,
     // laptop pequeno) ela encolhe um pouco para sobrar mais espaço pro
     // conteúdo principal, evitando que o chat fique espremido demais.
-    final double sidebarWidth = availableWidth < 900 ? 200 : 240;
+    final double sidebarWidth = availableWidth < 900 ? 220 : 280;
     final String currentServerName = selectedServerId == kBuiltInServerId
         ? 'Cord'
         : myServers.firstWhere((s) => s.id == selectedServerId).name;
 
+    Widget mainContent;
+    if (navArea == _NavArea.server) {
+      mainContent = loadingChannels
+          ? const Center(
+              child: CircularProgressIndicator(color: _C.blurple))
+          : _ChatArea(
+              channelName: selectedChannel,
+              displayName: _selectedChannelLabel,
+              controller: _messageController,
+              scrollController: _scrollController,
+              onSend: () => _sendMessage(selectedChannel),
+              onSendMedia: (file) => _sendChannelMedia(
+                channelName: selectedChannel,
+                serverId: selectedServerId,
+                file: file,
+              ),
+              onToggleMembers: () => setState(
+                  () => showMembersPanel = !showMembersPanel),
+              membersPanelOpen: showMembersPanel,
+              myUserId: widget.userId,
+              serverId: selectedServerId,
+            );
+    } else if (activeDmConversation != null) {
+      mainContent = _DmChatArea(
+        conversation: activeDmConversation!,
+        controller: _dmMessageController,
+        scrollController: _dmScrollController,
+        onSend: _sendDmMessage,
+        onSendMedia: _sendDmMedia,
+        myUserId: widget.userId,
+        onPublicServerJoined: _refreshMyServersAfterVoiceInvite,
+      );
+    } else {
+      mainContent = _FriendsMainPanel(
+        myUserId: widget.userId,
+        onOpenConversation: _openConversationWith,
+      );
+    }
+
     return Scaffold(
-      body: Row(
+      backgroundColor: _C.darkest,
+      body: Column(
         children: [
-          _ServerRail(
+          // ---------------- NAVBAR SUPERIOR (glass) ----------------
+          // Substitui o rail vertical de servidores: logo, tabs principais
+          // (Início / Mensagens / servidores) e resumo do perfil à direita.
+          _TopNavBar(
+            currentServerName: currentServerName,
             navArea: navArea,
-            servers: myServers,
-            selectedServerId: selectedServerId,
-            onHomeTap: () => setState(() => navArea = _NavArea.friends),
-            onSelectServer: (id) {
+            userId: widget.userId,
+            onHomeTap: () => setState(() {
+              navArea = _NavArea.friends;
+              activeDmConversation = null;
+            }),
+            onMessagesTap: () => setState(() => navArea = _NavArea.friends),
+            onServerTap: (id) {
               setState(() => navArea = _NavArea.server);
               _selectServer(id);
             },
-            onAddServer: () => _openServerActions(context),
+            servers: myServers,
+            selectedServerId: selectedServerId,
           ),
-          if (navArea == _NavArea.server)
-            _ChannelSidebar(
-              serverName: currentServerName,
-              serverIsPublic: _activeServer?.isPublic,
-              canManageServer: _activeServer?.ownerId == widget.userId,
-              onCreateInvite:
-                  _activeServer == null ? null : _createServerInvite,
-              onToggleVisibility: _activeServer?.ownerId == widget.userId
-                  ? _toggleServerVisibility
-                  : null,
-              categories: currentCategories,
-              selectedChannel: selectedChannel,
-              onChannelTap: _selectChannel,
-              userId: widget.userId,
-              width: sidebarWidth,
-              showHeader: true,
-            )
-          else
-            _FriendsSidebar(
-              myUserId: widget.userId,
-              activeConversationId: activeDmConversation?.id,
-              onFriendsTap: () => setState(() => activeDmConversation = null),
-              onOpenConversation: (conv) =>
-                  setState(() => activeDmConversation = conv),
-              width: sidebarWidth,
-            ),
+          // ---------------- 2 COLUNAS ----------------
           Expanded(
-            child: navArea == _NavArea.server
-                ? (loadingChannels
-                    ? const Center(
-                        child: CircularProgressIndicator(color: _C.blurple))
-                    : _ChatArea(
-                        channelName: selectedChannel,
-                        displayName: _selectedChannelLabel,
-                        controller: _messageController,
-                        scrollController: _scrollController,
-                        onSend: () => _sendMessage(selectedChannel),
-                        onSendMedia: (file) => _sendChannelMedia(
-                          channelName: selectedChannel,
-                          serverId: selectedServerId,
-                          file: file,
-                        ),
-                        onToggleMembers: () => setState(
-                            () => showMembersPanel = !showMembersPanel),
-                        membersPanelOpen: showMembersPanel,
-                        myUserId: widget.userId,
-                        serverId: selectedServerId,
-                      ))
-                : (activeDmConversation != null
-                    ? _DmChatArea(
-                        conversation: activeDmConversation!,
-                        controller: _dmMessageController,
-                        scrollController: _dmScrollController,
-                        onSend: _sendDmMessage,
-                        onSendMedia: _sendDmMedia,
-                        myUserId: widget.userId,
-                        onPublicServerJoined: _refreshMyServersAfterVoiceInvite,
-                      )
-                    : _FriendsMainPanel(
-                        myUserId: widget.userId,
-                        onOpenConversation: _openConversationWith,
-                      )),
+            child: Row(
+              children: [
+                // Drawer esquerdo: canais (modo servidor) ou amigos/DMs
+                // (modo social). Colapsável pelo botão na navbar.
+                if (navArea == _NavArea.server)
+                  _ChannelSidebar(
+                    serverName: currentServerName,
+                    serverIsPublic: _activeServer?.isPublic,
+                    canManageServer: _activeServer?.ownerId == widget.userId,
+                    onCreateInvite: _activeServer == null
+                        ? null
+                        : _createServerInvite,
+                    onToggleVisibility:
+                        _activeServer?.ownerId == widget.userId
+                            ? _toggleServerVisibility
+                            : null,
+                    categories: currentCategories,
+                    selectedChannel: selectedChannel,
+                    onChannelTap: _selectChannel,
+                    userId: widget.userId,
+                    width: sidebarWidth,
+                    showHeader: true,
+                    onCreateChannel: _canManageChannels
+                        ? _createChannelInCategory
+                        : null,
+                    onEditChannel:
+                        _canManageChannels ? _renameChannel : null,
+                    onDeleteChannel:
+                        _canManageChannels ? _deleteChannel : null,
+                  )
+                else
+                  _FriendsSidebar(
+                    myUserId: widget.userId,
+                    activeConversationId: activeDmConversation?.id,
+                    onFriendsTap: () =>
+                        setState(() => activeDmConversation = null),
+                    onOpenConversation: (conv) =>
+                        setState(() => activeDmConversation = conv),
+                    width: sidebarWidth,
+                  ),
+                Expanded(child: mainContent),
+              ],
+            ),
           ),
         ],
       ),
@@ -849,6 +1068,9 @@ class _CordHomePageState extends State<CordHomePage> {
               userId: widget.userId,
               width: double.infinity,
               showHeader: false,
+              onCreateChannel: _canManageChannels ? _createChannelInCategory : null,
+              onEditChannel: _canManageChannels ? _renameChannel : null,
+              onDeleteChannel: _canManageChannels ? _deleteChannel : null,
               onChannelTap: (channel) {
                 if (channel.type == ChannelType.voice) {
                   _selectChannel(channel);
@@ -875,6 +1097,207 @@ class _CordHomePageState extends State<CordHomePage> {
                 );
               },
             ),
+    );
+  }
+}
+
+// =========================================================================
+// NAVBAR SUPERIOR — logo + tabs + perfil (glassmorphism)
+// =========================================================================
+// Substitui o rail vertical do layout antigo do Discord: navegação no
+// topo, em linha, com fundo translúcido desfocado e sombra difusa.
+class _TopNavBar extends StatelessWidget {
+  final String currentServerName;
+  final _NavArea navArea;
+  final String userId;
+  final VoidCallback onHomeTap;
+  final VoidCallback onMessagesTap;
+  final ValueChanged<String> onServerTap;
+  final List<ServerModel> servers;
+  final String selectedServerId;
+
+  const _TopNavBar({
+    required this.currentServerName,
+    required this.navArea,
+    required this.userId,
+    required this.onHomeTap,
+    required this.onMessagesTap,
+    required this.onServerTap,
+    required this.servers,
+    required this.selectedServerId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isFriendsActive = navArea == _NavArea.friends;
+
+    return Container(
+      height: 64,
+      decoration: BoxDecoration(
+        // Glassmorphism: branco translúcido + blur + borda de luz fina.
+        color: Colors.white.withOpacity(0.72),
+        border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.6))),
+        boxShadow: _C.softShadow,
+      ),
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                // LOGO
+                GestureDetector(
+                  onTap: onHomeTap,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: _C.softShadow,
+                    ),
+                    child: const Text('Cord',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 17,
+                            letterSpacing: -0.3)),
+                  ),
+                ),
+                const SizedBox(width: 20),
+                // TABS PRINCIPAIS
+                _NavTab(
+                  icon: Icons.home_rounded,
+                  label: 'Início',
+                  isActive: isFriendsActive &&
+                      selectedServerId == kBuiltInServerId,
+                  onTap: onHomeTap,
+                ),
+                const SizedBox(width: 6),
+                _NavTab(
+                  icon: Icons.chat_bubble_rounded,
+                  label: 'Mensagens',
+                  isActive: isFriendsActive,
+                  onTap: onMessagesTap,
+                ),
+                const SizedBox(width: 6),
+                // Aba Configurações: abre a tela dedicada.
+                _NavTab(
+                  icon: Icons.settings_rounded,
+                  label: 'Configurações',
+                  isActive: false,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          SettingsScreen(userId: userId),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                // Servidores como "tabs" com dropdown.
+                PopupMenuButton<String>(
+                  tooltip: 'Servidores',
+                  onSelected: onServerTap,
+                  color: _C.inputBg,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                        value: kBuiltInServerId,
+                        child: const Text('Cord (global)')),
+                    for (final s in servers)
+                      PopupMenuItem(value: s.id, child: Text(s.name)),
+                  ],
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: !isFriendsActive
+                          ? _C.activeChannel
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.dns_rounded,
+                            size: 18,
+                            color: !isFriendsActive
+                                ? _C.blurple
+                                : _C.textMuted),
+                        const SizedBox(width: 6),
+                        Text(currentServerName,
+                            style: TextStyle(
+                                color: !isFriendsActive
+                                    ? _C.textHeader
+                                    : _C.textNormal,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.expand_more_rounded,
+                            size: 18, color: _C.textMuted),
+                      ],
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                // RESUMO DO PERFIL (abre o próprio perfil ao clicar).
+                GestureDetector(
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ProfileScreen(
+                          userId: userId, isOwnProfile: true),
+                    ),
+                  ),
+                  child: _UserFooter(userId: userId),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavTab extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isActive;
+  final VoidCallback onTap;
+  const _NavTab({
+    required this.icon,
+    required this.label,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: isActive ? _C.activeChannel : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon,
+                size: 19,
+                color: isActive ? _C.blurple : _C.textMuted),
+            const SizedBox(width: 6),
+            Text(label,
+                style: TextStyle(
+                    color: isActive ? _C.textHeader : _C.textNormal,
+                    fontWeight:
+                        isActive ? FontWeight.w700 : FontWeight.w500)),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1328,6 +1751,11 @@ class _ChannelSidebar extends StatelessWidget {
   final double width;
   final bool showHeader;
 
+  /// Gestão de canais (só para o dono do servidor):
+  final void Function(ChannelType type)? onCreateChannel;
+  final void Function(ChannelDef channel)? onEditChannel;
+  final void Function(ChannelDef channel)? onDeleteChannel;
+
   const _ChannelSidebar({
     required this.serverName,
     required this.serverIsPublic,
@@ -1340,6 +1768,9 @@ class _ChannelSidebar extends StatelessWidget {
     required this.userId,
     required this.width,
     required this.showHeader,
+    this.onCreateChannel,
+    this.onEditChannel,
+    this.onDeleteChannel,
   });
 
   @override
@@ -1391,6 +1822,9 @@ class _ChannelSidebar extends StatelessWidget {
                     category: category,
                     selectedChannel: selectedChannel,
                     onChannelTap: onChannelTap,
+                    onCreateChannel: onCreateChannel,
+                    onEditChannel: onEditChannel,
+                    onDeleteChannel: onDeleteChannel,
                   ),
               ],
             ),
@@ -1406,25 +1840,52 @@ class _CategorySection extends StatelessWidget {
   final CategoryDef category;
   final String selectedChannel;
   final ValueChanged<ChannelDef> onChannelTap;
+  final void Function(ChannelType type)? onCreateChannel;
+  final void Function(ChannelDef channel)? onEditChannel;
+  final void Function(ChannelDef channel)? onDeleteChannel;
 
   const _CategorySection({
     required this.category,
     required this.selectedChannel,
     required this.onChannelTap,
+    this.onCreateChannel,
+    this.onEditChannel,
+    this.onDeleteChannel,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isVoiceCategory = category.channels.isNotEmpty
+        ? category.channels.first.type == ChannelType.voice
+        : category.title.toUpperCase().contains('VOZ');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 12),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Text(
-            category.title,
-            style: const TextStyle(
-                color: _C.textMuted, fontSize: 12, fontWeight: FontWeight.w700),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  category.title,
+                  style: const TextStyle(
+                      color: _C.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+              if (onCreateChannel != null)
+                GestureDetector(
+                  onTap: () =>
+                      onCreateChannel!(isVoiceCategory ? ChannelType.voice : ChannelType.text),
+                  child: const Padding(
+                    padding: EdgeInsets.all(2),
+                    child: Icon(Icons.add_rounded,
+                        color: _C.textMuted, size: 18),
+                  ),
+                ),
+            ],
           ),
         ),
         for (final channel in category.channels)
@@ -1432,6 +1893,8 @@ class _CategorySection extends StatelessWidget {
             channel: channel,
             isSelected: channel.name == selectedChannel,
             onTap: () => onChannelTap(channel),
+            onEdit: onEditChannel,
+            onDelete: onDeleteChannel,
           ),
       ],
     );
@@ -1442,9 +1905,16 @@ class _ChannelTile extends StatefulWidget {
   final ChannelDef channel;
   final bool isSelected;
   final VoidCallback onTap;
+  final void Function(ChannelDef channel)? onEdit;
+  final void Function(ChannelDef channel)? onDelete;
 
-  const _ChannelTile(
-      {required this.channel, required this.isSelected, required this.onTap});
+  const _ChannelTile({
+    required this.channel,
+    required this.isSelected,
+    required this.onTap,
+    this.onEdit,
+    this.onDelete,
+  });
 
   @override
   State<_ChannelTile> createState() => _ChannelTileState();
@@ -1495,6 +1965,53 @@ class _ChannelTileState extends State<_ChannelTile> {
                     ),
                   ),
                 ),
+                // Menu de editar/excluir — só para canais que vivem no banco
+                // (o "Cord" fixo não tem id) e quando há alguém autorizado a
+                // gerenciar (callbacks informados).
+                if (widget.channel.id != null &&
+                    (widget.onEdit != null || widget.onDelete != null) &&
+                    (_hovering || widget.isSelected))
+                  SizedBox(
+                    width: 24,
+                    child: PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_horiz_rounded,
+                          size: 18, color: _C.textMuted),
+                      padding: EdgeInsets.zero,
+                      onSelected: (value) {
+                        if (value == 'edit' && widget.onEdit != null) {
+                          widget.onEdit!(widget.channel);
+                        } else if (value == 'delete' &&
+                            widget.onDelete != null) {
+                          widget.onDelete!(widget.channel);
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: 'edit',
+                          height: 36,
+                          child: Row(children: [
+                            Icon(Icons.edit_rounded,
+                                size: 16, color: _C.textMuted),
+                            SizedBox(width: 8),
+                            Text('Renomear',
+                                style: TextStyle(fontSize: 14)),
+                          ]),
+                        ),
+                        PopupMenuItem(
+                          value: 'delete',
+                          height: 36,
+                          child: Row(children: [
+                            Icon(Icons.delete_rounded,
+                                size: 16, color: _C.red),
+                            SizedBox(width: 8),
+                            Text('Excluir',
+                                style: TextStyle(
+                                    fontSize: 14, color: _C.red)),
+                          ]),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),
@@ -1552,9 +2069,17 @@ class _UserFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Card de usuário claro e sem "quadro escuro" legado: superfície
+    // translúcida, cantos arredondados, alinhado com a navbar superior.
     return Container(
-      height: 52,
-      color: const Color(0xFF232428),
+      margin: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.75),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withOpacity(0.6)),
+        boxShadow: _C.softShadow,
+      ),
       child: StreamBuilder<Profile>(
         stream: ProfileService.watchMyProfile(userId),
         builder: (context, snapshot) {
@@ -1564,9 +2089,8 @@ class _UserFooter extends StatelessWidget {
               displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
 
           return InkWell(
-            // Clicar em qualquer parte do rodapé (não só no avatar) abre
-            // o SEU PRÓPRIO perfil — é o mesmo comportamento do cartão
-            // de usuário no canto inferior esquerdo do Discord.
+            borderRadius: BorderRadius.circular(12),
+            // Clicar abre o SEU PRÓPRIO perfil.
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) =>
@@ -1574,26 +2098,36 @@ class _UserFooter extends StatelessWidget {
               ),
             ),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               child: Row(
                 children: [
-                  CircleAvatar(
-                    radius: 16,
-                    backgroundColor: _C.blurple,
-                    backgroundImage: profile?.avatarUrl != null
-                        ? NetworkImage(profile!.avatarUrl!)
-                        : null,
-                    child: profile?.avatarUrl == null
-                        ? Text(initial,
-                            style: const TextStyle(color: Colors.white))
-                        : null,
+                  Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: _C.blurple, width: 2),
+                    ),
+                    child: CircleAvatar(
+                      radius: 15,
+                      backgroundColor: _C.blurple,
+                      backgroundImage: profile?.avatarUrl != null
+                          ? NetworkImage(profile!.avatarUrl!)
+                          : null,
+                      child: profile?.avatarUrl == null
+                          ? Text(initial,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700))
+                          : null,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(displayName,
                         overflow: TextOverflow.ellipsis,
-                        style:
-                            const TextStyle(color: Colors.white, fontSize: 13)),
+                        style: const TextStyle(
+                            color: _C.textHeader,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
                   ),
                 ],
               ),
@@ -2144,7 +2678,7 @@ class _DmChatArea extends StatelessWidget {
   }
 }
 
-class _DmMessagesList extends StatelessWidget {
+class _DmMessagesList extends StatefulWidget {
   final String conversationId;
   final ScrollController scrollController;
   final String myUserId;
@@ -2156,6 +2690,43 @@ class _DmMessagesList extends StatelessWidget {
     required this.myUserId,
     required this.onPublicServerJoined,
   });
+
+  @override
+  State<_DmMessagesList> createState() => _DmMessagesListState();
+}
+
+class _DmMessagesListState extends State<_DmMessagesList> {
+  late Stream<List<DirectMessageModel>> _stream;
+  StreamSubscription<void>? _reconnectSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _stream = _buildStream();
+    // REGRA 3: ao reconectar (aba oculta/AFK), recria a stream — o refetch
+    // completo traz as mensagens perdidas sem duplicar nada.
+    _reconnectSub = RealtimeLifecycleService.instance.onReconnect.listen((_) {
+      if (mounted) setState(() => _stream = _buildStream());
+    });
+  }
+
+  Stream<List<DirectMessageModel>> _buildStream() =>
+      DmService.watchConversation(widget.conversationId);
+
+  @override
+  void didUpdateWidget(covariant _DmMessagesList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationId != widget.conversationId) {
+      _stream = _buildStream();
+    }
+  }
+
+  @override
+  void dispose() {
+    // REGRA 4: cancela o listener de reconexão ao sair da conversa.
+    _reconnectSub?.cancel();
+    super.dispose();
+  }
 
   /// Se a mensagem for um convite de chamada de voz (ver
   /// kVoiceInvitePrefix em voice_call_screen.dart), mostra um cartão
@@ -2174,22 +2745,51 @@ class _DmMessagesList extends StatelessWidget {
       channelName: invite.channelName,
       expiresAt:
           message.expiresAt ?? message.createdAt.add(kVoiceInviteLifetime),
-      myUserId: myUserId,
-      onPublicServerJoined: onPublicServerJoined,
+      myUserId: widget.myUserId,
+      onPublicServerJoined: widget.onPublicServerJoined,
     );
   }
 
   Widget _buildMessageBody(BuildContext context, DirectMessageModel message) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (message.mediaPath != null)
+    final isMine = message.senderId == widget.myUserId;
+    final hasMedia = message.mediaPath != null;
+    final hasText = message.content.trim().isNotEmpty;
+
+    // Mensagem só de mídia: sem bolha, card com aspect ratio original.
+    if (hasMedia && !hasText) {
+      return Column(
+        crossAxisAlignment:
+            isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
           _ChatMediaPreview(
             mediaType: message.mediaType,
             mediaUrl: message.mediaUrl,
             fileName: message.mediaName,
           ),
-        if (message.content.isNotEmpty) _buildMessageContent(context, message),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment:
+          isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        if (hasMedia)
+          _ChatMediaPreview(
+            mediaType: message.mediaType,
+            mediaUrl: message.mediaUrl,
+            fileName: message.mediaName,
+          ),
+        if (hasText)
+          Padding(
+            padding: EdgeInsets.only(top: hasMedia ? 2 : 0),
+            child: isMine
+                // Texto branco sobre o indigo da bolha enviada.
+                ? Text(message.content,
+                    style: const TextStyle(
+                        color: Colors.white, fontSize: 15, height: 1.35))
+                : _buildMessageContent(context, message),
+          ),
       ],
     );
   }
@@ -2197,7 +2797,7 @@ class _DmMessagesList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<DirectMessageModel>>(
-      stream: DmService.watchConversation(conversationId),
+      stream: _stream,
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const Center(
@@ -2206,8 +2806,9 @@ class _DmMessagesList extends StatelessWidget {
         final messages = snapshot.data!;
 
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (scrollController.hasClients) {
-            scrollController.jumpTo(scrollController.position.maxScrollExtent);
+          if (widget.scrollController.hasClients) {
+            widget.scrollController
+                .jumpTo(widget.scrollController.position.maxScrollExtent);
           }
         });
 
@@ -2218,41 +2819,102 @@ class _DmMessagesList extends StatelessWidget {
           );
         }
 
+        // Mesma linguagem de bolhas do chat de servidor: enviada à direita
+        // (menta), recebida à esquerda (branca).
         return ListView.builder(
-          controller: scrollController,
+          controller: widget.scrollController,
           padding: const EdgeInsets.symmetric(vertical: 16),
           itemCount: messages.length,
           itemBuilder: (context, index) {
             final message = messages[index];
+            final isMine = message.senderId == widget.myUserId;
             return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment:
+                    isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  _ChatAvatar(
-                    displayName: message.senderDisplayName,
-                    avatarUrl: message.senderAvatarUrl,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
+                  if (!isMine)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8, bottom: 2),
+                      child: _ChatAvatar(
+                        displayName: message.senderDisplayName,
+                        avatarUrl: message.senderAvatarUrl,
+                      ),
+                    ),
+                  Flexible(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: isMine
+                          ? CrossAxisAlignment.end
+                          : CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            Text(message.senderDisplayName,
+                        if (!isMine)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 3, left: 4),
+                            child: Row(
+                              children: [
+                                Text(message.senderDisplayName,
+                                    style: const TextStyle(
+                                        color: _C.blurple,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 12.5)),
+                                const SizedBox(width: 6),
+                                Text(
+                                    DateFormat('HH:mm')
+                                        .format(message.createdAt),
+                                    style: const TextStyle(
+                                        color: _C.textMuted,
+                                        fontSize: 10.5)),
+                              ],
+                            ),
+                          ),
+                        // SÓ MÍDIA: sem bolha — o card fala por si.
+                        if (message.mediaPath != null &&
+                            message.content.trim().isEmpty)
+                          _buildMessageBody(context, message)
+                        else
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                            constraints: BoxConstraints(
+                                maxWidth:
+                                    MediaQuery.of(context).size.width *
+                                        0.7),
+                            decoration: BoxDecoration(
+                              gradient: isMine
+                                  ? const LinearGradient(colors: [
+                                      Color(0xFF6366F1),
+                                      Color(0xFF8B5CF6)
+                                    ])
+                                  : null,
+                              color: isMine ? null : _C.inputBg,
+                              borderRadius: BorderRadius.only(
+                                topLeft: const Radius.circular(18),
+                                topRight: const Radius.circular(18),
+                                bottomLeft:
+                                    Radius.circular(isMine ? 18 : 4),
+                                bottomRight:
+                                    Radius.circular(isMine ? 4 : 18),
+                              ),
+                              border: isMine
+                                  ? null
+                                  : Border.all(color:
+                                      Colors.white.withOpacity(0.6)),
+                              boxShadow: _C.softShadow,
+                            ),
+                            child: _buildMessageBody(context, message),
+                          ),
+                        if (isMine)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3, right: 4),
+                            child: Text(
+                                DateFormat('HH:mm')
+                                    .format(message.createdAt),
                                 style: const TextStyle(
-                                    color: _C.textHeader,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 15)),
-                            const SizedBox(width: 8),
-                            Text(DateFormat('HH:mm').format(message.createdAt),
-                                style: const TextStyle(
-                                    color: _C.textMuted, fontSize: 11.5)),
-                          ],
-                        ),
-                        const SizedBox(height: 2),
-                        _buildMessageBody(context, message),
+                                    color: _C.textMuted,
+                                    fontSize: 10.5)),
+                          ),
                       ],
                     ),
                   ),
@@ -2398,7 +3060,7 @@ class _VoiceInviteCardState extends State<_VoiceInviteCard> {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: _C.blurple.withOpacity(0.12),
+          color: _C.blurple.withValues(alpha: 0.12),
           border: Border.all(color: _C.blurple),
           borderRadius: BorderRadius.circular(8),
         ),
@@ -2688,7 +3350,7 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
 
 /// Lista de mensagens de um canal — em tempo real, direto do Supabase.
 /// Reaproveitado tanto pelo layout desktop quanto pelo mobile.
-class _MessagesList extends StatelessWidget {
+class _MessagesList extends StatefulWidget {
   final String channelName;
   final ScrollController scrollController;
   final String myUserId;
@@ -2702,9 +3364,51 @@ class _MessagesList extends StatelessWidget {
   });
 
   @override
+  State<_MessagesList> createState() => _MessagesListState();
+}
+
+class _MessagesListState extends State<_MessagesList> {
+  late Stream<List<MessageModel>> _stream;
+  StreamSubscription<void>? _reconnectSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _stream = _buildStream();
+    // REGRA 3 — SINCRONIZAÇÃO: quando o RealtimeLifecycleService reconecta
+    // (volta de aba oculta ou de AFK), recriamos a stream. Ela refaz o
+    // fetch COMPLETO do histórico — as mensagens enviadas enquanto o
+    // usuário estava desconectado aparecem, e nada duplica (é a lista
+    // inteira do banco, não um append).
+    _reconnectSub = RealtimeLifecycleService.instance.onReconnect.listen((_) {
+      if (mounted) setState(() => _stream = _buildStream());
+    });
+  }
+
+  Stream<List<MessageModel>> _buildStream() =>
+      ChatService.watchChannel(widget.channelName, serverId: widget.serverId);
+
+  @override
+  void didUpdateWidget(covariant _MessagesList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // REGRA 4 — LIMPEZA/recriação: se o canal mudou, nova stream.
+    if (oldWidget.channelName != widget.channelName ||
+        oldWidget.serverId != widget.serverId) {
+      _stream = _buildStream();
+    }
+  }
+
+  @override
+  void dispose() {
+    // REGRA 4 — todos os listeners deste widget são cancelados aqui.
+    _reconnectSub?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<MessageModel>>(
-      stream: ChatService.watchChannel(channelName, serverId: serverId),
+      stream: _stream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(
@@ -2721,8 +3425,9 @@ class _MessagesList extends StatelessWidget {
 
         // Autoscroll para a mensagem mais recente sempre que a lista mudar.
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (scrollController.hasClients) {
-            scrollController.jumpTo(scrollController.position.maxScrollExtent);
+          if (widget.scrollController.hasClients) {
+            widget.scrollController
+                .jumpTo(widget.scrollController.position.maxScrollExtent);
           }
         });
 
@@ -2734,11 +3439,11 @@ class _MessagesList extends StatelessWidget {
         }
 
         return ListView.builder(
-          controller: scrollController,
+          controller: widget.scrollController,
           padding: const EdgeInsets.symmetric(vertical: 16),
           itemCount: messages.length,
-          itemBuilder: (context, index) =>
-              _MessageBubble(message: messages[index], myUserId: myUserId),
+          itemBuilder: (context, index) => _MessageBubble(
+              message: messages[index], myUserId: widget.myUserId),
         );
       },
     );
@@ -2763,21 +3468,51 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildMessageBody() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (message.mediaPath != null)
+  Widget _buildMessageBody(bool isMine) {
+    final hasMedia = message.mediaPath != null;
+    final hasText = message.content.trim().isNotEmpty;
+
+    // ---------------- MENSAGEM SÓ DE MÍDIA ----------------
+    // Sem bolha: a mídia vive no próprio card (com aspect ratio real).
+    if (hasMedia && !hasText) {
+      return Column(
+        crossAxisAlignment:
+            isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
           _ChatMediaPreview(
             mediaType: message.mediaType,
             mediaUrl: message.mediaUrl,
             fileName: message.mediaName,
           ),
-        if (message.content.isNotEmpty)
-          Text(
-            message.content,
-            style: const TextStyle(
-                color: _C.textNormal, fontSize: 15, height: 1.35),
+        ],
+      );
+    }
+
+    // ---------------- MÍDIA + TEXTO ou SÓ TEXTO ----------------
+    // Quando há texto junto, o card de mídia entra dentro da bolha
+    // (sem padding lateral extra para alinhar com o texto).
+    return Column(
+      crossAxisAlignment:
+          isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        if (hasMedia)
+          _ChatMediaPreview(
+            mediaType: message.mediaType,
+            mediaUrl: message.mediaUrl,
+            fileName: message.mediaName,
+          ),
+        if (hasText)
+          Padding(
+            padding: EdgeInsets.only(top: hasMedia ? 2 : 0),
+            child: Text(
+              message.content,
+              style: TextStyle(
+                  // Texto branco sobre o indigo das bolhas enviadas;
+                  // charcoal sobre o branco das recebidas.
+                  color: isMine ? Colors.white : _C.textNormal,
+                  fontSize: 15,
+                  height: 1.35),
+            ),
           ),
       ],
     );
@@ -2785,46 +3520,95 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Clicar no avatar abre o perfil de quem enviou a mensagem
-          // (o próprio, se for você; o de outra pessoa, caso contrário).
-          GestureDetector(
-            onTap: () => _openProfile(context),
-            child: _ChatAvatar(
-              displayName: message.senderDisplayName,
-              avatarUrl: message.senderAvatarUrl,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    final isMine = message.senderId == myUserId;
+
+    final content = Column(
+      crossAxisAlignment:
+          isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        // Remetente + hora (só em mensagens recebidas, como no iMessage).
+        if (!isMine)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 3, left: 4),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    GestureDetector(
-                      onTap: () => _openProfile(context),
-                      child: Text(message.senderDisplayName,
-                          style: const TextStyle(
-                              color: _C.textHeader,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 15)),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(_formatTime(message.createdAt),
-                        style: const TextStyle(
-                            color: _C.textMuted, fontSize: 11.5)),
-                  ],
+                GestureDetector(
+                  onTap: () => _openProfile(context),
+                  child: Text(message.senderDisplayName,
+                      style: const TextStyle(
+                          color: _C.blurple,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5)),
                 ),
-                const SizedBox(height: 2),
-                _buildMessageBody(),
+                const SizedBox(width: 6),
+                Text(_formatTime(message.createdAt),
+                    style: const TextStyle(
+                        color: _C.textMuted, fontSize: 10.5)),
               ],
             ),
           ),
+        // BOLHA — cantos assimétricos (estilo mensageiro):
+        // enviada = indigo sólido com texto branco, à direita;
+        // recebida = branco limpo com texto escuro, à esquerda.
+        // Quando é SÓ MÍDIA (sem texto), a bolha é omitida por completo:
+        // o card de mídia (com aspect ratio original) fala por si.
+        if (message.mediaPath != null &&
+            message.content.trim().isEmpty)
+          _buildMessageBody(isMine)
+        else
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.7),
+            decoration: BoxDecoration(
+              gradient: isMine
+                  ? const LinearGradient(
+                      colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)])
+                  : null,
+              color: isMine ? null : _C.inputBg,
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(18),
+                topRight: const Radius.circular(18),
+                bottomLeft: Radius.circular(isMine ? 18 : 4),
+                bottomRight: Radius.circular(isMine ? 4 : 18),
+              ),
+              border: isMine
+                  ? null
+                  : Border.all(color: Colors.white.withOpacity(0.6)),
+              boxShadow: _C.softShadow,
+            ),
+            child: _buildMessageBody(isMine),
+          ),
+        if (isMine)
+          Padding(
+            padding: const EdgeInsets.only(top: 3, right: 4),
+            child: Text(_formatTime(message.createdAt),
+                style: const TextStyle(
+                    color: _C.textMuted, fontSize: 10.5)),
+          ),
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+      child: Row(
+        mainAxisAlignment:
+            isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (!isMine)
+            Padding(
+              padding: const EdgeInsets.only(right: 8, bottom: 2),
+              child: GestureDetector(
+                onTap: () => _openProfile(context),
+                child: _ChatAvatar(
+                  displayName: message.senderDisplayName,
+                  avatarUrl: message.senderAvatarUrl,
+                ),
+              ),
+            ),
+          Flexible(child: content),
         ],
       ),
     );
@@ -2842,6 +3626,10 @@ class _ChatMediaPreview extends StatelessWidget {
     required this.fileName,
   });
 
+  /// CARD DE MÍDIA INDEPENDENTE — fora da bolha de texto.
+  /// Imagens/vídeos são renderizados com o aspect ratio ORIGINAL
+  /// (nada de crop), num card arredondado com borda e sombra sutis.
+  /// Toque numa imagem abre o lightbox em tela cheia.
   @override
   Widget build(BuildContext context) {
     if (mediaUrl == null || mediaUrl!.isEmpty) {
@@ -2854,29 +3642,49 @@ class _ChatMediaPreview extends StatelessWidget {
       );
     }
 
+    // Largura máxima do card: ~60% da tela (spec), com teto absoluto.
+    final maxMediaWidth =
+        (MediaQuery.of(context).size.width * 0.6).clamp(240.0, 420.0);
+
     if (mediaType == 'image') {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: Image.network(
-            mediaUrl!,
-            width: 420,
-            height: 320,
-            fit: BoxFit.contain,
-            alignment: Alignment.centerLeft,
-            loadingBuilder: (context, child, progress) => progress == null
-                ? child
-                : const SizedBox(
-                    width: 240,
-                    height: 160,
-                    child: Center(
-                      child: CircularProgressIndicator(color: _C.blurple),
-                    ),
-                  ),
-            errorBuilder: (context, error, stackTrace) => const Text(
-              'Não foi possível carregar esta imagem.',
-              style: TextStyle(color: _C.textMuted),
+        padding: const EdgeInsets.only(bottom: 6),
+        child: GestureDetector(
+          onTap: () => _openLightbox(context),
+          child: Container(
+            constraints: BoxConstraints(maxWidth: maxMediaWidth),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _C.divider),
+              boxShadow: _C.softShadow,
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Image.network(
+                mediaUrl!,
+                // Aspect ratio ORIGINAL: largura limitada, altura livre,
+                // BoxFit contendo a imagem inteira (sem crop).
+                fit: BoxFit.contain,
+                alignment: Alignment.centerLeft,
+                loadingBuilder: (context, child, progress) => progress == null
+                    ? child
+                    : Container(
+                        width: maxMediaWidth,
+                        height: 180,
+                        decoration: BoxDecoration(
+                          color: _C.hoverChannel,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Center(
+                          child: CircularProgressIndicator(
+                              color: _C.blurple),
+                        ),
+                      ),
+                errorBuilder: (context, error, stackTrace) => const Text(
+                  'Não foi possível carregar esta imagem.',
+                  style: TextStyle(color: _C.textMuted),
+                ),
+              ),
             ),
           ),
         ),
@@ -2885,14 +3693,79 @@ class _ChatMediaPreview extends StatelessWidget {
 
     if (mediaType == 'video') {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: _ChatVideoPlayer(url: mediaUrl!),
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Container(
+          constraints: BoxConstraints(maxWidth: maxMediaWidth),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _C.divider),
+            boxShadow: _C.softShadow,
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: _ChatVideoPlayer(url: mediaUrl!),
+          ),
+        ),
       );
     }
 
     return Text(
       fileName ?? 'Anexo',
       style: const TextStyle(color: _C.textMuted, fontSize: 13),
+    );
+  }
+
+  /// LIGHTBOX — imagem em tela cheia sobre fundo escuro translúcido.
+  /// Clique em qualquer lugar fecha.
+  void _openLightbox(BuildContext context) {
+    Navigator.of(context).push(PageRouteBuilder(
+      opaque: false,
+      barrierColor: Colors.black.withOpacity(0.92),
+      pageBuilder: (_, __, ___) => _ImageLightbox(url: mediaUrl!),
+      transitionsBuilder: (_, animation, __, child) => FadeTransition(
+        opacity: animation,
+        child: child,
+      ),
+    ));
+  }
+}
+
+/// Visualizador em tela cheia: imagem centrada, BoxFit.contain (foto
+/// inteira, qualidade máxima), fundo quase preto. Toque fecha.
+class _ImageLightbox extends StatelessWidget {
+  final String url;
+  const _ImageLightbox({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.of(context).pop(),
+      child: Scaffold(
+        backgroundColor: Colors.black.withOpacity(0.92),
+        body: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                maxScale: 4.0,
+                child: Image.network(url, fit: BoxFit.contain),
+              ),
+            ),
+            SafeArea(
+              child: Align(
+                alignment: Alignment.topRight,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: IconButton(
+                    icon: const Icon(Icons.close_rounded,
+                        color: Colors.white),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -3072,12 +3945,19 @@ class _MessageInputBarState extends State<_MessageInputBar> {
 
   @override
   Widget build(BuildContext context) {
+    // Barra de input flutuante em vidro: pílula arredondada, sombra
+    // difusa, borda clara e padding simétrico — placeholder e ícone de
+    // enviar alinhados dentro dos limites.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
       child: Container(
         decoration: BoxDecoration(
-            color: _C.inputBg, borderRadius: BorderRadius.circular(12)),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          color: Colors.white.withOpacity(0.85),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: Colors.white.withOpacity(0.7)),
+          boxShadow: _C.softShadow,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         child: Row(
           children: [
             IconButton(
@@ -3099,22 +3979,33 @@ class _MessageInputBarState extends State<_MessageInputBar> {
               child: TextField(
                 controller: widget.controller,
                 style: const TextStyle(color: _C.textNormal, fontSize: 15),
-                cursorColor: Colors.white,
+                cursorColor: _C.blurple,
                 decoration: InputDecoration(
                   hintText: 'Conversar em #${widget.channelName}',
                   hintStyle: const TextStyle(color: _C.textMuted),
                   border: InputBorder.none,
                   isCollapsed: true,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                  contentPadding:
+                      const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
                 ),
                 onSubmitted: (_) => widget.onSend(),
                 textInputAction: TextInputAction.send,
               ),
             ),
-            IconButton(
-              tooltip: 'Enviar mensagem',
-              icon: const Icon(Icons.send_rounded, color: _C.blurple),
-              onPressed: widget.onSend,
+            // Botão de enviar em pílula de acento (está dentro do raio
+            // do container, mantendo o alinhamento vertical).
+            Container(
+              margin: const EdgeInsets.only(left: 4),
+              decoration: const BoxDecoration(
+                color: _C.blurple,
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                tooltip: 'Enviar mensagem',
+                icon: const Icon(Icons.send_rounded,
+                    color: Colors.white, size: 20),
+                onPressed: widget.onSend,
+              ),
             ),
           ],
         ),

@@ -6,27 +6,54 @@ import '../models/models.dart';
 import '../services/friend_service.dart';
 import '../services/profile_service.dart';
 import '../services/supabase_client.dart';
+import '../theme/app_theme.dart';
 
 // Paleta clara compartilhada com o design system do chat (cord_home_page).
 class _C {
-  static const bg = Color(0xFFF8FAFC); // fundo do app (slate-50)
-  static const darker = Color(0xFFFFFFFF); // superfícies/cards
-  static const blurple = Color(0xFF6366F1); // deep indigo (acento primário)
+  static bool get _dark => AppTheme.isDark;
+
+  static Color get bg =>
+      _dark ? const Color(0xFF0B0F1A) : const Color(0xFFF8FAFC);
+  static Color get darker =>
+      _dark ? const Color(0xFF111827) : const Color(0xFFFFFFFF);
+  static Color get blurple =>
+      _dark ? const Color(0xFF818CF8) : const Color(0xFF6366F1);
   static const violet = Color(0xFF8B5CF6);
-  static const green = Color(0xFF0EA5E9);
-  static const textNormal = Color(0xFF334155);
-  static const textMuted = Color(0xFF64748B);
-  static const textHeader = Color(0xFF0F172A);
-  static const divider = Color(0xFFE2E8F0);
+  static Color get green =>
+      _dark ? const Color(0xFF38BDF8) : const Color(0xFF0EA5E9);
+  static Color get textNormal =>
+      _dark ? const Color(0xFFCBD5E1) : const Color(0xFF334155);
+  static Color get textMuted =>
+      _dark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+  static Color get textHeader =>
+      _dark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+  static Color get divider =>
+      _dark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0);
   static const red = Color(0xFFE11D48);
 
-  static List<BoxShadow> get softShadow => [
-        BoxShadow(
-          color: const Color(0xFF0F172A).withOpacity(0.06),
-          blurRadius: 18,
-          offset: const Offset(0, 6),
-        ),
-      ];
+  static Color get card => cardBg;
+  static Color get cardBg => _dark
+      ? const Color(0xFF111827).withValues(alpha: 0.85)
+      : Colors.white.withValues(alpha: 0.8);
+  static Color get glassBorder => _dark
+      ? const Color(0xFF1E293B).withValues(alpha: 0.6)
+      : Colors.white.withValues(alpha: 0.6);
+
+  static List<BoxShadow> get softShadow => _dark
+      ? [
+          BoxShadow(
+            color: const Color(0xFF6366F1).withValues(alpha: 0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
+        ]
+      : [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.06),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ];
 }
 
 /// Tela de perfil do usuário logado (ou de outro usuário, em modo leitura).
@@ -135,11 +162,13 @@ class _ProfileScreenState extends State<ProfileScreen>
       // HEADER claro: seta de voltar + título integrados numa barra
       // translúcida, sem aparência de app escuro legado.
       appBar: AppBar(
-        backgroundColor: Colors.white.withOpacity(0.72),
+        backgroundColor: AppTheme.isDark
+            ? Colors.white.withValues(alpha: 0.06)
+            : Colors.white.withValues(alpha: 0.72),
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         foregroundColor: _C.textHeader,
-        title: const Text('Perfil',
+        title: Text('Perfil',
             style: TextStyle(fontWeight: FontWeight.w700)),
       ),
       body: FutureBuilder<Profile>(
@@ -152,7 +181,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
+                    Text(
                       'Não foi possível carregar o perfil.',
                       style: TextStyle(color: _C.textHeader),
                       textAlign: TextAlign.center,
@@ -160,7 +189,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                     const SizedBox(height: 8),
                     Text(
                       '${snapshot.error}',
-                      style: const TextStyle(color: _C.textMuted),
+                      style: TextStyle(color: _C.textMuted),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 16),
@@ -175,7 +204,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             );
           }
           if (!snapshot.hasData) {
-            return const Center(
+            return Center(
               child: CircularProgressIndicator(color: _C.blurple),
             );
           }
@@ -187,9 +216,9 @@ class _ProfileScreenState extends State<ProfileScreen>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.8),
+                  color: _C.cardBg,
                   borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: Colors.white.withOpacity(0.6)),
+                  border: Border.all(color: _C.glassBorder),
                   boxShadow: _C.softShadow,
                 ),
                 child: Column(
@@ -223,7 +252,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                     const SizedBox(height: 14),
                     Text(
                       profile.displayName,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: _C.textHeader,
                         fontSize: 21,
                         fontWeight: FontWeight.w800,
@@ -232,7 +261,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                     const SizedBox(height: 2),
                     Text(
                       '@${profile.username}',
-                      style: const TextStyle(color: _C.textMuted, fontSize: 13.5),
+                      style: TextStyle(color: _C.textMuted, fontSize: 13.5),
                     ),
                     if (profile.bio.isNotEmpty) ...[
                       const SizedBox(height: 10),
@@ -241,7 +270,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                         textAlign: TextAlign.center,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: _C.textMuted, fontSize: 13, height: 1.4),
                       ),
                     ],
@@ -252,7 +281,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                         onPressed: () => _openEditSheet(profile),
                         icon: const Icon(Icons.edit_rounded,
                             size: 16, color: Colors.white),
-                        label: const Text('Editar perfil',
+                        label: Text('Editar perfil',
                             style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w600)),
@@ -279,7 +308,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               // ---------------- TABS (indicador em pill) ----------------
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.6),
+                  color: _C.cardBg,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: _C.divider),
                 ),
@@ -331,7 +360,7 @@ class _MainTab extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.8),
+        color: _C.cardBg,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: Colors.white.withOpacity(0.6)),
         boxShadow: _C.softShadow,
@@ -339,7 +368,7 @@ class _MainTab extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Sobre mim',
+          Text('Sobre mim',
               style: TextStyle(
                   color: _C.textMuted,
                   fontSize: 12,
@@ -372,7 +401,7 @@ class _WishlistTab extends StatelessWidget {
     // Placeholder — plugue aqui uma tabela `wishlist_items` no Supabase
     // do mesmo jeito que fizemos com profiles/messages, se quiser essa
     // aba funcional de verdade.
-    return const Center(
+    return Center(
       child: Text('Nenhum item na lista de desejos ainda.',
           style: TextStyle(color: _C.textMuted)),
     );
@@ -402,7 +431,7 @@ class _FriendActionButton extends StatelessWidget {
       future: relationshipFuture,
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
-          return const SizedBox(
+          return SizedBox(
             height: 36,
             width: 36,
             child: CircularProgressIndicator(strokeWidth: 2, color: _C.blurple),
@@ -413,9 +442,11 @@ class _FriendActionButton extends StatelessWidget {
 
         switch (status) {
           case FriendshipStatus.friends:
-            return const Chip(
-              avatar: Icon(Icons.check_circle_rounded, color: _C.green, size: 18),
-              label: Text('Vocês são amigos', style: TextStyle(color: Colors.white)),
+            return Chip(
+              avatar: Icon(Icons.check_circle_rounded,
+                  color: _C.green, size: 18),
+              label: Text('Vocês são amigos',
+                  style: TextStyle(color: _C.textHeader)),
               backgroundColor: _C.darker,
             );
 
@@ -423,9 +454,9 @@ class _FriendActionButton extends StatelessWidget {
             return OutlinedButton.icon(
               onPressed: null, // desabilitado: já esperando resposta
               icon: const Icon(Icons.hourglass_top_rounded, size: 16),
-              label: const Text('Pedido enviado'),
+              label: Text('Pedido enviado'),
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: _C.textMuted),
+                side: BorderSide(color: _C.textMuted),
                 foregroundColor: _C.textMuted,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
               ),
@@ -439,13 +470,14 @@ class _FriendActionButton extends StatelessWidget {
                 ElevatedButton.icon(
                   onPressed: () => onRespond(requestId!, true),
                   icon: const Icon(Icons.check_rounded, size: 16),
-                  label: const Text('Aceitar pedido'),
-                  style: ElevatedButton.styleFrom(backgroundColor: _C.blurple),
+                  label: Text('Aceitar pedido'),
+                  style: ElevatedButton.styleFrom(backgroundColor: _C.blurple)
                 ),
                 const SizedBox(width: 8),
                 TextButton(
                   onPressed: () => onRespond(requestId!, false),
-                  child: const Text('Recusar', style: TextStyle(color: _C.textMuted)),
+                  child: Text('Recusar',
+                      style: TextStyle(color: _C.textMuted)),
                 ),
               ],
             );
@@ -454,8 +486,9 @@ class _FriendActionButton extends StatelessWidget {
             return ElevatedButton.icon(
               onPressed: onSendRequest,
               icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
-              label: const Text('Adicionar amigo'),
-              style: ElevatedButton.styleFrom(backgroundColor: _C.blurple),
+              label: Text('Adicionar amigo'),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: _C.blurple),
             );
         }
       },
@@ -603,7 +636,7 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('Editar perfil',
+          Text('Editar perfil',
               style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           Center(
@@ -617,7 +650,7 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
                       CircleAvatar(
                         radius: 40,
                         backgroundColor: _C.blurple,
-                        child: _buildAvatarPreview(),
+                        child: _buildAvatarPreview()
                       ),
                       CircleAvatar(
                         radius: 15,
@@ -652,31 +685,37 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
                   ),
                 ),
                 if (_pickedImage != null)
-                  const Text(
+                  Text(
                     'A foto será salva ao tocar em Salvar.',
-                    style: TextStyle(color: _C.textMuted, fontSize: 12),
+                    style: TextStyle(color: _C.textMuted, fontSize: 12)
                   ),
               ],
             ),
           ),
           const SizedBox(height: 20),
-          const Text('Nome de exibição',
-              style: TextStyle(color: _C.textMuted, fontSize: 12, fontWeight: FontWeight.bold)),
+          Text('Nome de exibição',
+              style: TextStyle(
+                  color: _C.textMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           TextField(
             controller: _nameController,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: _C.textHeader),
             decoration: const InputDecoration(
               hintText: 'Nome exibido para todos',
             ),
           ),
           const SizedBox(height: 16),
-          const Text('BIO',
-              style: TextStyle(color: _C.textMuted, fontSize: 12, fontWeight: FontWeight.bold)),
+          Text('BIO',
+              style: TextStyle(
+                  color: _C.textMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           TextField(
             controller: _bioController,
-            style: const TextStyle(color: Colors.white),
+            style: TextStyle(color: _C.textHeader),
             maxLength: _maxBioLength,
             maxLines: 5,
             minLines: 3,

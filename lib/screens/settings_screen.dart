@@ -1,31 +1,53 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../services/auth_service.dart';
-import '../services/supabase_client.dart';
 import '../models/models.dart';
 import '../services/profile_service.dart';
+import '../theme/app_theme.dart';
 import 'profile_screen.dart';
 
 // =========================================================================
 // PALETA — espelha o design system do chat (Deep Indigo / neutros claros).
 // =========================================================================
 class SettingsColors {
-  static const bg = Color(0xFFF8FAFC);
-  static const accent = Color(0xFF6366F1);
-  static const violet = Color(0xFF8B5CF6);
-  static const textHeader = Color(0xFF0F172A);
-  static const textNormal = Color(0xFF334155);
-  static const textMuted = Color(0xFF64748B);
-  static const divider = Color(0xFFE2E8F0);
-  static const red = Color(0xFFE11D48);
+  static bool get _dark => AppTheme.isDark;
 
-  static List<BoxShadow> get softShadow => [
-        BoxShadow(
-          color: const Color(0xFF0F172A).withOpacity(0.06),
-          blurRadius: 18,
-          offset: const Offset(0, 6),
-        ),
-      ];
+  static Color get bg =>
+      _dark ? const Color(0xFF0B0F1A) : const Color(0xFFF8FAFC);
+  static Color get card => _dark
+      ? const Color(0xFF111827).withValues(alpha: 0.85)
+      : Colors.white.withValues(alpha: 0.85);
+  static Color get accent =>
+      _dark ? const Color(0xFF818CF8) : const Color(0xFF6366F1);
+  static const violet = Color(0xFF8B5CF6);
+  static Color get textHeader =>
+      _dark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+  static Color get textNormal =>
+      _dark ? const Color(0xFFCBD5E1) : const Color(0xFF334155);
+  static Color get textMuted =>
+      _dark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+  static Color get divider =>
+      _dark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0);
+  static const red = Color(0xFFE11D48);
+  static Color get border => _dark
+      ? const Color(0xFF1E293B).withValues(alpha: 0.6)
+      : Colors.white.withValues(alpha: 0.3);
+
+  static List<BoxShadow> get softShadow => _dark
+      ? [
+          BoxShadow(
+            color: const Color(0xFF6366F1).withValues(alpha: 0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
+        ]
+      : [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.06),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ];
 }
 
 /// =========================================================================
@@ -49,20 +71,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _soundOn = true;
   bool _showOnlineStatus = true;
   bool _readReceipts = true;
-  bool _darkMode = false;
+  bool _darkMode = AppTheme.isDark; // reflete o tema atual ao abrir
 
-  String _appVersion = '1.0.0';
+  final String _appVersion = '1.0.0';
 
   Future<void> _confirmLogout() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: Colors.white,
+        backgroundColor: SettingsColors.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Sair da conta',
+        title: Text('Sair da conta',
             style: TextStyle(
-                color: SettingsColors.textHeader, fontWeight: FontWeight.w800)),
-        content: const Text(
+                color: SettingsColors.textHeader,
+                fontWeight: FontWeight.w800)),
+        content: Text(
           'Você será desconectado e voltará para a tela de login.',
           style: TextStyle(color: SettingsColors.textMuted),
         ),
@@ -89,7 +112,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       backgroundColor: SettingsColors.bg,
       appBar: AppBar(
-        backgroundColor: Colors.white.withOpacity(0.72),
+        backgroundColor: Colors.white.withValues(alpha: 0.72),
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         foregroundColor: SettingsColors.textHeader,
@@ -147,19 +170,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(name,
-                                style: const TextStyle(
+                                style: TextStyle(
                                     color: SettingsColors.textHeader,
                                     fontWeight: FontWeight.w700,
                                     fontSize: 15)),
                             if (profile != null)
                               Text('@${profile.username}',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                       color: SettingsColors.textMuted,
                                       fontSize: 12.5)),
                           ],
                         ),
                       ),
-                      const Icon(Icons.chevron_right_rounded,
+                      Icon(Icons.chevron_right_rounded,
                           color: SettingsColors.textMuted),
                     ],
                   ),
@@ -170,7 +193,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 16),
 
           // ================= NOTIFICAÇÕES =================
-          _SectionLabel('Notificações'),
+          const _SectionLabel('Notificações'),
           _SettingsCard(
             child: Column(
               children: [
@@ -181,7 +204,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   value: _notificationsOn,
                   onChanged: (v) => setState(() => _notificationsOn = v),
                 ),
-                const Divider(height: 1, color: SettingsColors.divider),
+                Divider(height: 1, color: SettingsColors.divider),
                 _SwitchRow(
                   icon: Icons.volume_up_rounded,
                   label: 'Som das notificações',
@@ -195,20 +218,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 16),
 
           // ================= APARÊNCIA =================
-          _SectionLabel('Aparência'),
+          const _SectionLabel('Aparência'),
           _SettingsCard(
             child: Column(
               children: [
                 _SwitchRow(
                   icon: Icons.dark_mode_rounded,
                   label: 'Modo escuro',
-                  subtitle: 'Em breve — o Cord é claro por enquanto',
+                  subtitle: 'Alterna o tema do app inteiro',
                   value: _darkMode,
                   onChanged: (v) {
                     setState(() => _darkMode = v);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text(
-                            'O modo escuro chegará em uma próxima versão.')));
+                    // Liga no controlador global: o MaterialApp inteiro
+                    // reconstrói com darkTheme (ver main.dart).
+                    AppTheme.isDark = v;
                   },
                 ),
               ],
@@ -217,7 +240,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 16),
 
           // ================= PRIVACIDADE =================
-          _SectionLabel('Privacidade e segurança'),
+          const _SectionLabel('Privacidade e segurança'),
           _SettingsCard(
             child: Column(
               children: [
@@ -228,7 +251,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   value: _showOnlineStatus,
                   onChanged: (v) => setState(() => _showOnlineStatus = v),
                 ),
-                const Divider(height: 1, color: SettingsColors.divider),
+                Divider(height: 1, color: SettingsColors.divider),
                 _SwitchRow(
                   icon: Icons.done_all_rounded,
                   label: 'Confirmações de leitura',
@@ -242,7 +265,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 16),
 
           // ================= SOBRE =================
-          _SectionLabel('Sobre o aplicativo'),
+          const _SectionLabel('Sobre o aplicativo'),
           _SettingsCard(
             child: Column(
               children: [
@@ -251,14 +274,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   label: 'Versão',
                   value: _appVersion,
                 ),
-                const Divider(height: 1, color: SettingsColors.divider),
+                Divider(height: 1, color: SettingsColors.divider),
                 _LinkRow(
                   icon: Icons.description_outlined,
                   label: 'Termos de uso',
                   onTap: () => ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('Termos de uso em breve.'))),
                 ),
-                const Divider(height: 1, color: SettingsColors.divider),
+                Divider(height: 1, color: SettingsColors.divider),
                 _LinkRow(
                   icon: Icons.privacy_tip_outlined,
                   label: 'Política de privacidade',
@@ -275,8 +298,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: SettingsColors.red.withOpacity(0.35)),
-              color: Colors.white.withOpacity(0.85),
+              border: Border.all(color: SettingsColors.red.withValues(alpha: 0.35)),
+              color: Colors.white.withValues(alpha: 0.85),
               boxShadow: SettingsColors.softShadow,
             ),
             child: InkWell(
@@ -320,9 +343,9 @@ class _SettingsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.85),
+        color: Colors.white.withValues(alpha: 0.85),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.3)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
         boxShadow: SettingsColors.softShadow,
       ),
       child: ClipRRect(
@@ -343,7 +366,7 @@ class _SectionLabel extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(left: 6, bottom: 8),
       child: Text(text.toUpperCase(),
-          style: const TextStyle(
+          style: TextStyle(
               color: SettingsColors.textMuted,
               fontSize: 12,
               fontWeight: FontWeight.w700,
@@ -378,7 +401,7 @@ class _SwitchRow extends StatelessWidget {
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: SettingsColors.accent.withOpacity(0.1),
+              color: SettingsColors.accent.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(icon, size: 19, color: SettingsColors.accent),
@@ -389,12 +412,12 @@ class _SwitchRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(label,
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: SettingsColors.textHeader,
                         fontWeight: FontWeight.w600,
                         fontSize: 14.5)),
                 Text(subtitle,
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: SettingsColors.textMuted, fontSize: 12.5)),
               ],
             ),
@@ -402,7 +425,7 @@ class _SwitchRow extends StatelessWidget {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: Colors.white,
+            activeThumbColor: Colors.white,
             activeTrackColor: SettingsColors.accent,
             inactiveThumbColor: SettingsColors.textMuted,
             inactiveTrackColor: SettingsColors.divider,
@@ -431,7 +454,7 @@ class _InfoRow extends StatelessWidget {
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: SettingsColors.accent.withOpacity(0.1),
+              color: SettingsColors.accent.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(icon, size: 19, color: SettingsColors.accent),
@@ -439,13 +462,13 @@ class _InfoRow extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Text(label,
-                style: const TextStyle(
+                style: TextStyle(
                     color: SettingsColors.textHeader,
                     fontWeight: FontWeight.w600,
                     fontSize: 14.5)),
           ),
           Text(value,
-              style: const TextStyle(
+              style: TextStyle(
                   color: SettingsColors.textMuted, fontSize: 13)),
         ],
       ),
@@ -473,7 +496,7 @@ class _LinkRow extends StatelessWidget {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: SettingsColors.accent.withOpacity(0.1),
+                color: SettingsColors.accent.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(icon, size: 19, color: SettingsColors.accent),
@@ -481,12 +504,12 @@ class _LinkRow extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Text(label,
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: SettingsColors.textHeader,
                       fontWeight: FontWeight.w600,
                       fontSize: 14.5)),
             ),
-            const Icon(Icons.chevron_right_rounded,
+            Icon(Icons.chevron_right_rounded,
                 color: SettingsColors.textMuted),
           ],
         ),

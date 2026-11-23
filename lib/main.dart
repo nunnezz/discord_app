@@ -7,6 +7,7 @@ import 'services/supabase_client.dart';
 import 'services/auth_service.dart';
 import 'auth/auth_screen.dart';
 import 'screens/cord_home_page.dart';
+import 'theme/app_theme.dart';
 
 Future<void> main() async {
   // Necessário sempre que você faz algo assíncrono ANTES do runApp.
@@ -28,28 +29,50 @@ class CordApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Cord',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
-        useMaterial3: true,
-        // Tipografia moderna (Inter quando disponível no dispositivo,
-        // fallback da plataforma caso contrário) e hierarquia limpa.
-        fontFamily: 'Inter',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF6366F1), // deep indigo
+    // O modo escuro é CONTROLADO GLOBALMENTE pelo switch em Configurações
+    // (AppTheme.darkMode). Este ValueListenableBuilder reconstrói o
+    // MaterialApp quando o usuário liga/desliga — e o darkTheme abaixo é
+    // o mesmo design system (indigo/neutros) em Brightness.dark.
+    return ValueListenableBuilder<bool>(
+      valueListenable: AppTheme.darkMode,
+      builder: (context, isDark, _) => MaterialApp(
+        title: 'Cord',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
           brightness: Brightness.light,
+          scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+          useMaterial3: true,
+          fontFamily: 'Inter',
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF6366F1), // deep indigo
+            brightness: Brightness.light,
+          ),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Color(0xCCFFFFFF),
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            foregroundColor: Color(0xFF0F172A),
+          ),
         ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xCCFFFFFF),
-          surfaceTintColor: Colors.transparent,
-          elevation: 0,
-          foregroundColor: Color(0xFF0F172A),
+        darkTheme: ThemeData(
+          brightness: Brightness.dark,
+          scaffoldBackgroundColor: const Color(0xFF0B0F1A),
+          useMaterial3: true,
+          fontFamily: 'Inter',
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF818CF8), // indigo claro no escuro
+            brightness: Brightness.dark,
+          ),
+          appBarTheme: AppBarTheme(
+            backgroundColor: Colors.white.withOpacity(0.06),
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            foregroundColor: const Color(0xFFE2E8F0),
+          ),
         ),
+        themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
+        home: const AuthGate(),
       ),
-      home: const AuthGate(),
     );
   }
 }

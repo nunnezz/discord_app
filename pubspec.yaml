@@ -9,6 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  shared_preferences: ^2.3.2
 
   # Backend / banco de dados em tempo real + autenticação
   supabase_flutter: ^2.6.0

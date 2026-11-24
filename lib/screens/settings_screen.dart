@@ -112,7 +112,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       backgroundColor: SettingsColors.bg,
       appBar: AppBar(
-        backgroundColor: Colors.white.withValues(alpha: 0.72),
+        backgroundColor: SettingsColors.card, // vidro adaptativo
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         foregroundColor: SettingsColors.textHeader,
@@ -225,13 +225,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _SwitchRow(
                   icon: Icons.dark_mode_rounded,
                   label: 'Modo escuro',
-                  subtitle: 'Alterna o tema do app inteiro',
+                  subtitle: 'Salvo automaticamente neste dispositivo',
                   value: _darkMode,
                   onChanged: (v) {
                     setState(() => _darkMode = v);
-                    // Liga no controlador global: o MaterialApp inteiro
-                    // reconstrói com darkTheme (ver main.dart).
-                    AppTheme.isDark = v;
+                    // Define E salva: persiste entre recarregadas e sessões.
+                    AppTheme.setDark(v);
                   },
                 ),
               ],
@@ -299,7 +298,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: SettingsColors.red.withValues(alpha: 0.35)),
-              color: Colors.white.withValues(alpha: 0.85),
+              color: SettingsColors.card,
               boxShadow: SettingsColors.softShadow,
             ),
             child: InkWell(
@@ -343,9 +342,9 @@ class _SettingsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.85),
+        color: SettingsColors.card,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+        border: Border.all(color: SettingsColors.border),
         boxShadow: SettingsColors.softShadow,
       ),
       child: ClipRRect(
@@ -425,7 +424,7 @@ class _SwitchRow extends StatelessWidget {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeThumbColor: Colors.white,
+            activeColor: Colors.white,
             activeTrackColor: SettingsColors.accent,
             inactiveThumbColor: SettingsColors.textMuted,
             inactiveTrackColor: SettingsColors.divider,

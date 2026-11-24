@@ -361,10 +361,18 @@ class VoiceCallService {
     final engine = _engine;
     if (engine == null) return;
     if (_screenCaptureActive) {
-      await stopScreenShare();
+      try {
+        await stopScreenShare();
+      } catch (_) {
+        // Segue: o objetivo agora é sair, não reportar falha de capture.
+      }
     }
-    await engine.leaveChannel();
-    await engine.release();
+    try {
+      await engine.leaveChannel();
+    } catch (_) {}
+    try {
+      await engine.release();
+    } catch (_) {}
     _engine = null;
     _screenUid = null;
     _screenCaptureActive = false;

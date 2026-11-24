@@ -16,6 +16,10 @@ Future<void> main() async {
   await AppConfig.load();
   await initSupabase();
 
+  // Carrega o tema salvo ANTES do runApp — evita flash do tema claro
+  // quando o usuário escolheu o escuro na sessão anterior.
+  await AppTheme.load();
+
   // Liga o gerenciamento inteligente de conexões Realtime: libera vagas
   // do limite de 200 conexões do plano free desconectando usuários com
   // aba oculta >30s ou inativos >5min (ver realtime_lifecycle_service).

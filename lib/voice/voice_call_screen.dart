@@ -1,4 +1,4 @@
-import 'dart:math';
+﻿import 'dart:math';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart';
@@ -9,15 +9,16 @@ import '../models/models.dart';
 import '../services/dm_service.dart';
 import '../services/friend_service.dart';
 import '../services/supabase_client.dart';
+import '../theme/app_theme.dart';
 import 'voice_call_agora.dart';
 
 // =========================================================================
 // FORMATO DO CONVITE DE CHAMADA
 // =========================================================================
-// Um convite é só uma mensagem de DM com um formato especial no
-// conteúdo. Quem recebe (na lista de conversas privadas) reconhece
-// esse prefixo e mostra um cartão com botão "Entrar na chamada" em vez
-// do balão de texto normal — ver o trecho correspondente em
+// Um convite Ã© sÃ³ uma mensagem de DM com um formato especial no
+// conteÃºdo. Quem recebe (na lista de conversas privadas) reconhece
+// esse prefixo e mostra um cartÃ£o com botÃ£o "Entrar na chamada" em vez
+// do balÃ£o de texto normal â€” ver o trecho correspondente em
 // cord_home_page.dart (_DmMessagesList).
 const String kVoiceInvitePrefix = 'VOICE_CALL_INVITE::';
 const Duration kVoiceInviteLifetime = Duration(hours: 24);
@@ -30,12 +31,12 @@ String buildVoiceInviteMessage(
     '$kVoiceInvitePrefix$roomId::$channelName';
 
 /// Faz o caminho inverso: separa `roomId` e `channelName` de dentro do
-/// conteúdo da mensagem. Retorna `null` se não for um convite válido.
+/// conteÃºdo da mensagem. Retorna `null` se nÃ£o for um convite vÃ¡lido.
 ///
-/// IMPORTANTE: usamos o ÚLTIMO "::" como separador (não um split
-/// simples em 2 partes), porque o próprio `roomId` já contém "::"
-/// dentro dele (é `servidorId::nomeDoCanal`) — um split ingênuo
-/// contaria 3 pedaços em vez de 2 e falharia sempre que o roomId
+/// IMPORTANTE: usamos o ÃšLTIMO "::" como separador (nÃ£o um split
+/// simples em 2 partes), porque o prÃ³prio `roomId` jÃ¡ contÃ©m "::"
+/// dentro dele (Ã© `servidorId::nomeDoCanal`) â€” um split ingÃªnuo
+/// contaria 3 pedaÃ§os em vez de 2 e falharia sempre que o roomId
 /// tivesse mais de um "::".
 ({String roomId, String channelName})? parseVoiceInviteMessage(String content) {
   if (!content.startsWith(kVoiceInvitePrefix)) return null;
@@ -60,20 +61,48 @@ String? serverIdFromVoiceRoomId(String roomId) {
 // PALETA (mesmo esquema usado no resto do app)
 // =========================================================================
 class _C {
-  static const bg = Color(0xFF1A1B1E);
-  static const card = Color(0xFF232428);
-  static const darker = Color(0xFF2B2D31);
-  static const divider = Color(0xFF3F4147);
-  static const blurple = Color(0xFF5865F2);
-  static const green = Color(0xFF23A55A);
-  static const red = Color(0xFFDA373C);
-  static const textMuted = Color(0xFF949BA4);
-  static const textHeader = Color(0xFFF2F3F5);
+  // Adaptativo: lÃª o tema global (AppTheme.isDark) para acompanhar o resto
+  // do app. No claro: superfÃ­cies off-white; no escuro: slate navy.
+  static bool get _dark => AppTheme.isDark;
+  static Color get bg =>
+      _dark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
+  static Color get card => _dark
+      ? const Color(0xFF1E293B).withValues(alpha: 0.85)
+      : Colors.white.withValues(alpha: 0.85);
+  static Color get darker =>
+      _dark ? const Color(0xFF0B0F1A) : const Color(0xFFFFFFFF);
+  static Color get divider =>
+      _dark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+  static Color get blurple =>
+      _dark ? const Color(0xFF818CF8) : const Color(0xFF6366F1);
+  static Color get green =>
+      _dark ? const Color(0xFF38BDF8) : const Color(0xFF0EA5E9);
+  static const red = Color(0xFFE11D48);
+  static Color get textMuted =>
+      _dark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+  static Color get textHeader =>
+      _dark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+
+  static List<BoxShadow> get softShadow => _dark
+      ? [
+          BoxShadow(
+            color: const Color(0xFF6366F1).withValues(alpha: 0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
+        ]
+      : [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.06),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ];
 }
 
 /// Um participante na chamada, com os dados reais vindos do Presence do
-/// Supabase (nome/avatar) — não apenas o `uid` numérico que o Agora usa
-/// internamente pra identificar cada stream de áudio/vídeo.
+/// Supabase (nome/avatar) â€” nÃ£o apenas o `uid` numÃ©rico que o Agora usa
+/// internamente pra identificar cada stream de Ã¡udio/vÃ­deo.
 class _VoiceParticipant {
   final String userId;
   final String displayName;
@@ -99,27 +128,27 @@ class _VoiceParticipant {
 }
 
 // =========================================================================
-// TELA DE CHAMADA DE VOZ/VÍDEO — funciona com várias pessoas ao mesmo
-// tempo (via Agora, um SFU de verdade — ver explicação em
-// voice_call_agora.dart sobre por que isso não é WebRTC puro).
+// TELA DE CHAMADA DE VOZ/VÃDEO â€” funciona com vÃ¡rias pessoas ao mesmo
+// tempo (via Agora, um SFU de verdade â€” ver explicaÃ§Ã£o em
+// voice_call_agora.dart sobre por que isso nÃ£o Ã© WebRTC puro).
 // =========================================================================
 class VoiceCallScreen extends StatefulWidget {
   /// Nome exibido na tela (ex: "Sala de Voz").
   final String channelName;
 
-  /// Identificador ÚNICO do canal de voz para o Agora e para o
-  /// Presence — combine servidor + canal (ex: "serverId::channelName")
+  /// Identificador ÃšNICO do canal de voz para o Agora e para o
+  /// Presence â€” combine servidor + canal (ex: "serverId::channelName")
   /// pra dois canais com o mesmo nome em servidores diferentes nunca
-  /// caírem na mesma "sala" por engano.
+  /// caÃ­rem na mesma "sala" por engano.
   final String roomId;
 
   final String myUserId;
   final String myDisplayName;
   final String? myAvatarUrl;
 
-  /// Chamado quando a chamada termina (desconectar) — a página host remove
+  /// Chamado quando a chamada termina (desconectar) â€” a pÃ¡gina host remove
   /// o overlay. Substitui o Navigator.pop, porque a call agora vive como
-  /// overlay interno da página, não como rota.
+  /// overlay interno da pÃ¡gina, nÃ£o como rota.
   final VoidCallback? onExit;
 
   const VoiceCallScreen({
@@ -136,8 +165,8 @@ class VoiceCallScreen extends StatefulWidget {
   State<VoiceCallScreen> createState() => _VoiceCallScreenState();
 }
 
-/// A chamada NÃO é mais aberta via rota — veja CordHomePage._activeCall.
-/// A função abaixo continua existindo só para compatibilidade de imports.
+/// A chamada NÃƒO Ã© mais aberta via rota â€” veja CordHomePage._activeCall.
+/// A funÃ§Ã£o abaixo continua existindo sÃ³ para compatibilidade de imports.
 
 Route<void> buildVoiceCallRoute(VoiceCallScreen screen) =>
     _TransparentCallRoute(screen: screen);
@@ -145,13 +174,13 @@ Route<void> buildVoiceCallRoute(VoiceCallScreen screen) =>
 /// Rota transparente SEM ModalBarrier.
 ///
 /// Toda PageRoute comum insere um ModalBarrier que absorve os toques da
-/// tela inteira — mesmo com `opaque: false` e `barrierColor: null`. Com a
-/// chamada minimizada, essa barreira invisível (no topo da pilha do
+/// tela inteira â€” mesmo com `opaque: false` e `barrierColor: null`. Com a
+/// chamada minimizada, essa barreira invisÃ­vel (no topo da pilha do
 /// Navigator) bloqueava TODOS os cliques no app por baixo.
 ///
-/// Aqui a barreira não existe: quando a call está aberta, o Scaffold dela
-/// cobre a tela e recebe os toques naturalmente; quando minimizada, só o
-/// overlay flutuante é clicável e o resto passa para o app por baixo.
+/// Aqui a barreira nÃ£o existe: quando a call estÃ¡ aberta, o Scaffold dela
+/// cobre a tela e recebe os toques naturalmente; quando minimizada, sÃ³ o
+/// overlay flutuante Ã© clicÃ¡vel e o resto passa para o app por baixo.
 class _TransparentCallRoute extends PageRoute<void> {
   _TransparentCallRoute({required this.screen});
 
@@ -206,10 +235,10 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
   int? _localScreenAgoraUid;
   String? _errorMessage;
 
-  // Mapeia o `uid` numérico do Agora -> dados reais do participante,
+  // Mapeia o `uid` numÃ©rico do Agora -> dados reais do participante,
   // resolvidos via Presence (que compartilha nome/avatar/estado do mic
   // entre todo mundo na "sala", sem precisar de nenhuma tabela nova no
-  // banco — Presence é efêmero e limpa sozinho quando alguém sai).
+  // banco â€” Presence Ã© efÃªmero e limpa sozinho quando alguÃ©m sai).
   final Set<int> _remoteUids = {};
 
   @override
@@ -220,8 +249,8 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
 
   Future<void> _joinEverything() async {
     try {
-      // 1. Entra no canal de Presence do Supabase — é isso que dá nome
-      // e avatar reais aos participantes, em vez de só "uid 8271".
+      // 1. Entra no canal de Presence do Supabase â€” Ã© isso que dÃ¡ nome
+      // e avatar reais aos participantes, em vez de sÃ³ "uid 8271".
       _presenceChannel = supabase.channel('voice:${widget.roomId}');
       _presenceChannel.onPresenceSync((_) {
         if (mounted) setState(() {});
@@ -231,8 +260,8 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
         }
       });
 
-      // 2. Busca um token de verdade na Edge Function — funciona pra
-      // QUALQUER canal, gerado na hora, sempre válido. O App
+      // 2. Busca um token de verdade na Edge Function â€” funciona pra
+      // QUALQUER canal, gerado na hora, sempre vÃ¡lido. O App
       // Certificate (a parte secreta) nunca sai do servidor.
       final tokenResponse = await supabase.functions.invoke(
         'agora-token',
@@ -269,8 +298,8 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
         onScreenShareStateChanged: (sharing) async {
           if (!mounted) return;
           if (_screenSharing != sharing) setState(() => _screenSharing = sharing);
-          // Força reconstruir o tile de preview local — sem isso, o Agora
-          // às vezes não associa o VideoView ao stream de tela no web.
+          // ForÃ§a reconstruir o tile de preview local â€” sem isso, o Agora
+          // Ã s vezes nÃ£o associa o VideoView ao stream de tela no web.
           setState(() {});
           await _trackPresence();
         },
@@ -306,19 +335,19 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
   }
 
   /// Traduz os erros mais comuns do Agora/navegador para uma frase
-  /// legível, em vez de despejar o stack trace técnico na tela.
+  /// legÃ­vel, em vez de despejar o stack trace tÃ©cnico na tela.
   String _friendlyVoiceError(Object e) {
     final raw = e.toString();
     if (raw.contains('NotFoundError') ||
         raw.contains('Requested device not found')) {
       return 'Nenhum microfone foi encontrado neste dispositivo. '
-          'Você entrou na chamada, mas não vai conseguir falar até conectar um microfone.';
+          'VocÃª entrou na chamada, mas nÃ£o vai conseguir falar atÃ© conectar um microfone.';
     }
     if (raw.contains('NotAllowedError') || raw.contains('Permission denied')) {
-      return 'Permissão de microfone negada. Libere o acesso ao microfone '
-          'nas configurações do navegador e recarregue a página.';
+      return 'PermissÃ£o de microfone negada. Libere o acesso ao microfone '
+          'nas configuraÃ§Ãµes do navegador e recarregue a pÃ¡gina.';
     }
-    return 'Não foi possível conectar: $raw';
+    return 'NÃ£o foi possÃ­vel conectar: $raw';
   }
 
   Future<void> _toggleMic() async {
@@ -329,7 +358,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
       setState(() => _micMuted = muted);
       await _trackPresence();
     } catch (error) {
-      _showCallError('Não foi possível alterar o microfone: $error');
+      _showCallError('NÃ£o foi possÃ­vel alterar o microfone: $error');
     }
   }
 
@@ -341,7 +370,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
       setState(() => _cameraOn = enabled);
       await _trackPresence();
     } catch (error) {
-      _showCallError('Não foi possível alterar a câmera: $error');
+      _showCallError('NÃ£o foi possÃ­vel alterar a cÃ¢mera: $error');
     }
   }
 
@@ -353,7 +382,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
   Future<ScreenCaptureSourceInfo?> _chooseScreenCaptureSource() async {
     final sources = await _voiceService.getScreenCaptureSources();
     if (sources.isEmpty) {
-      throw StateError('Não foi encontrada nenhuma tela ou janela disponível.');
+      throw StateError('NÃ£o foi encontrada nenhuma tela ou janela disponÃ­vel.');
     }
     if (!mounted) return null;
 
@@ -412,7 +441,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
         if (source == null && _usesDesktopSourcePicker) return;
         final screenUid = _localScreenAgoraUid;
         if (screenUid == null) {
-          throw StateError('A conexão da chamada ainda não está pronta.');
+          throw StateError('A conexÃ£o da chamada ainda nÃ£o estÃ¡ pronta.');
         }
         await _voiceService.startScreenShare(
           uid: screenUid,
@@ -425,9 +454,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
     } catch (error) {
       if (error is UnsupportedError) {
         _showCallError(error.message?.toString() ??
-            'O compartilhamento de tela não está disponível nesta plataforma.');
+            'O compartilhamento de tela nÃ£o estÃ¡ disponÃ­vel nesta plataforma.');
       } else {
-        _showCallError('Não foi possível compartilhar a tela: $error');
+        _showCallError('NÃ£o foi possÃ­vel compartilhar a tela: $error');
       }
     }
   }
@@ -471,7 +500,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Transmissão de ${participant.displayName}',
+                          'TransmissÃ£o de ${participant.displayName}',
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w600,
@@ -480,7 +509,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                         ),
                       ),
                       IconButton(
-                        tooltip: 'Voltar à chamada',
+                        tooltip: 'Voltar Ã  chamada',
                         onPressed: () => Navigator.of(dialogContext).pop(),
                         icon: const Icon(Icons.close_rounded,
                             color: Colors.white),
@@ -503,8 +532,14 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
   }
 
   Future<void> _disconnect() async {
-    await _voiceService.leaveChannel();
-    await supabase.removeChannel(_presenceChannel);
+    // Ignora falha do Agora: mesmo se leaveChannel() estourar (engine já
+    // morta, ex: após o erro -1 de conexão), a UI precisa sair da call.
+    try {
+      await _voiceService.leaveChannel();
+    } catch (_) {}
+    try {
+      await supabase.removeChannel(_presenceChannel);
+    } catch (_) {}
     if (mounted) {
       if (widget.onExit != null) {
         widget.onExit!();
@@ -527,8 +562,8 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
 
   @override
   void dispose() {
-    // Se o host remover o overlay sem passar pelo botão de desconectar,
-    // ainda assim liberamos o microfone/câmera e saímos do Presence.
+    // Se o host remover o overlay sem passar pelo botÃ£o de desconectar,
+    // ainda assim liberamos o microfone/cÃ¢mera e saÃ­mos do Presence.
     _voiceService.leaveChannel();
     supabase.removeChannel(_presenceChannel);
     super.dispose();
@@ -560,7 +595,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
           : int.tryParse(screenUidValue?.toString() ?? '');
       return _VoiceParticipant(
         userId: payload['user_id'] as String,
-        displayName: payload['display_name'] as String? ?? 'Alguém',
+        displayName: payload['display_name'] as String? ?? 'AlguÃ©m',
         avatarUrl: payload['avatar_url'] as String?,
         micMuted: payload['mic_muted'] as bool? ?? false,
         cameraOn: payload['camera_on'] as bool? ?? false,
@@ -576,7 +611,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
     return [
       _VoiceParticipant(
         userId: widget.myUserId,
-        displayName: '${widget.myDisplayName} (você)',
+        displayName: '${widget.myDisplayName} (vocÃª)',
         avatarUrl: widget.myAvatarUrl,
         micMuted: _micMuted,
         cameraOn: _cameraOn,
@@ -591,9 +626,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Sem PopScope: não somos uma rota. O botão "minimizar" apenas troca
-    // o layout — e, minimizado, este widget é um Stack pequeno no canto,
-    // deixando todo o resto do app clicável por baixo.
+    // Sem PopScope: nÃ£o somos uma rota. O botÃ£o "minimizar" apenas troca
+    // o layout â€” e, minimizado, este widget Ã© um Stack pequeno no canto,
+    // deixando todo o resto do app clicÃ¡vel por baixo.
     return _isMinimized
         ? _buildMinimizedCallOverlay(context)
         : _buildCallScreen();
@@ -607,11 +642,11 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
           children: [
             _CallTopBar(
               channelName: widget.channelName,
-              // Só mostra "Conectado" quando o Agora CONFIRMOU de
-              // verdade (onJoinSuccess) — não apenas quando o comando
+              // SÃ³ mostra "Conectado" quando o Agora CONFIRMOU de
+              // verdade (onJoinSuccess) â€” nÃ£o apenas quando o comando
               // de entrar foi enviado sem erro. Isso evita a tela
-              // mentir "Conectado" enquanto o áudio na real nunca saiu
-              // do lugar (ex: token inválido, erro de rede).
+              // mentir "Conectado" enquanto o Ã¡udio na real nunca saiu
+              // do lugar (ex: token invÃ¡lido, erro de rede).
               connecting: _connecting || !_agoraJoinConfirmed,
               onInvite: _openInviteDialog,
               onMinimize: () => setState(() => _isMinimized = true),
@@ -620,12 +655,11 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
               Padding(
                 padding: const EdgeInsets.all(16),
                 child:
-                    Text(_errorMessage!, style: const TextStyle(color: _C.red)),
+                    Text(_errorMessage!, style: TextStyle(color: _C.red)),
               ),
             Expanded(
               child: _connecting
-                  ? const Center(
-                      child: CircularProgressIndicator(color: _C.blurple))
+                  ? Center(child: CircularProgressIndicator(color: _C.blurple))
                   : Padding(
                       padding: const EdgeInsets.all(20),
                       child: LayoutBuilder(
@@ -721,9 +755,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
 
   Widget _buildMinimizedCallOverlay(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    // Stack cujo ÚNICO filho é o mini-player posicionado no canto. Um Stack
-    // só ocupa (e captura cliques) na área dos seus filhos — o resto do
-    // aplicativo por baixo permanece totalmente clicável.
+    // Stack cujo ÃšNICO filho Ã© o mini-player posicionado no canto. Um Stack
+    // sÃ³ ocupa (e captura cliques) na Ã¡rea dos seus filhos â€” o resto do
+    // aplicativo por baixo permanece totalmente clicÃ¡vel.
     if (size.width < 600) {
       return Stack(
         children: [
@@ -731,7 +765,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
             right: 12,
             bottom: 12,
             child: Tooltip(
-              message: '${widget.channelName} — voltar à chamada',
+              message: '${widget.channelName} â€” voltar Ã  chamada',
               child: Material(
                 color: _C.blurple,
                 elevation: 12,
@@ -773,29 +807,26 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                   padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
                   child: Row(
                     children: [
-                      const Icon(Icons.volume_up_rounded,
-                          color: _C.textMuted, size: 18),
+                      Icon(Icons.volume_up_rounded, color: _C.textMuted, size: 18),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           widget.channelName,
-                          style: const TextStyle(
-                            color: _C.textHeader,
+                          style: TextStyle(color: _C.textHeader,
                             fontWeight: FontWeight.w600,
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       IconButton(
-                        tooltip: 'Voltar à chamada',
+                        tooltip: 'Voltar Ã  chamada',
                         onPressed: () => setState(() => _isMinimized = false),
-                        icon: const Icon(Icons.open_in_full_rounded,
-                            color: _C.textMuted),
+                        icon: Icon(Icons.open_in_full_rounded, color: _C.textMuted),
                       ),
                     ],
                   ),
                 ),
-                const Divider(height: 1, color: _C.divider),
+                Divider(height: 1, color: _C.divider),
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child: Row(
@@ -811,7 +842,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                         ),
                       ),
                       IconButton(
-                        tooltip: _cameraOn ? 'Desligar câmera' : 'Ligar câmera',
+                        tooltip: _cameraOn ? 'Desligar cÃ¢mera' : 'Ligar cÃ¢mera',
                         onPressed: _toggleCamera,
                         icon: Icon(
                           _cameraOn
@@ -835,7 +866,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                       IconButton(
                         tooltip: 'Desconectar',
                         onPressed: _disconnect,
-                        icon: const Icon(Icons.call_end_rounded, color: _C.red),
+                        icon: Icon(Icons.call_end_rounded, color: _C.red),
                       ),
                     ],
                   ),
@@ -865,30 +896,28 @@ class _CallTopBar extends StatelessWidget {
     return Container(
       height: 56,
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
           border: Border(bottom: BorderSide(color: _C.divider))),
       child: Row(
         children: [
-          const Icon(Icons.volume_up_rounded, color: _C.textMuted, size: 20),
+          Icon(Icons.volume_up_rounded, color: _C.textMuted, size: 20),
           const SizedBox(width: 8),
           Expanded(
             child: Text(channelName,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    color: _C.textHeader,
+                style: TextStyle(color: _C.textHeader,
                     fontWeight: FontWeight.bold,
                     fontSize: 16)),
           ),
           IconButton(
             tooltip: 'Convidar amigos',
             icon:
-                const Icon(Icons.person_add_alt_1_rounded, color: _C.textMuted),
+                Icon(Icons.person_add_alt_1_rounded, color: _C.textMuted),
             onPressed: onInvite,
           ),
           IconButton(
             tooltip: 'Minimizar chamada e continuar usando o app',
-            icon: const Icon(Icons.picture_in_picture_alt_rounded,
-                color: _C.textMuted),
+            icon: Icon(Icons.picture_in_picture_alt_rounded, color: _C.textMuted),
             onPressed: onMinimize,
           ),
           const SizedBox(width: 4),
@@ -950,8 +979,7 @@ class _ParticipantTile extends StatelessWidget {
                     color: _C.bg,
                     alignment: Alignment.center,
                     child: videoView ??
-                        const Icon(Icons.videocam_rounded,
-                            color: _C.textMuted, size: 42),
+                        Icon(Icons.videocam_rounded, color: _C.textMuted, size: 42),
                   )
                 : Container(
                     color: _C.card,
@@ -995,7 +1023,7 @@ class _ParticipantTile extends StatelessWidget {
                 color: Colors.black54,
                 borderRadius: BorderRadius.circular(8),
                 child: IconButton(
-                  tooltip: 'Assistir transmissão em tela cheia',
+                  tooltip: 'Assistir transmissÃ£o em tela cheia',
                   onPressed: onExpandScreenShare,
                   icon:
                       const Icon(Icons.fullscreen_rounded, color: Colors.white),
@@ -1065,7 +1093,7 @@ class _CallControlBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 20),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
           border: Border(top: BorderSide(color: _C.divider))),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -1081,7 +1109,7 @@ class _CallControlBar extends StatelessWidget {
             icon:
                 cameraOn ? Icons.videocam_rounded : Icons.videocam_off_rounded,
             isActive: !cameraOn,
-            tooltip: cameraOn ? 'Desligar câmera' : 'Ligar câmera',
+            tooltip: cameraOn ? 'Desligar cÃ¢mera' : 'Ligar cÃ¢mera',
             onTap: onToggleCamera,
           ),
           const SizedBox(width: 16),
@@ -1167,7 +1195,7 @@ class _CallActionButtonState extends State<_CallActionButton> {
 }
 
 // =========================================================================
-// DIÁLOGO "CONVIDAR AMIGOS" — lista os amigos aceitos e manda um convite
+// DIÃLOGO "CONVIDAR AMIGOS" â€” lista os amigos aceitos e manda um convite
 // (mensagem de DM especial, ver kVoiceInvitePrefix) para cada um
 // selecionado.
 // =========================================================================
@@ -1242,7 +1270,7 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
                       fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               Text('Para "${widget.channelName}"',
-                  style: const TextStyle(color: _C.textMuted, fontSize: 13)),
+                  style: TextStyle(color: _C.textMuted, fontSize: 13)),
               const SizedBox(height: 16),
               Flexible(
                 child: FutureBuilder<List<Profile>>(
@@ -1253,13 +1281,13 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
                         padding: EdgeInsets.symmetric(vertical: 24),
                         child: Center(
                             child:
-                                CircularProgressIndicator(color: _C.blurple)),
+                                CircularProgressIndicator()),
                       );
                     }
                     final friends = snapshot.data!;
                     if (friends.isEmpty) {
-                      return const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 24),
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 24),
                         child: Text('Você ainda não tem amigos adicionados.',
                             style: TextStyle(color: _C.textMuted)),
                       );
@@ -1288,13 +1316,12 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
                           title: Text(friend.displayName,
                               style: const TextStyle(color: Colors.white)),
                           subtitle: Text('@${friend.username}',
-                              style: const TextStyle(
-                                  color: _C.textMuted, fontSize: 12)),
+                              style: TextStyle(color: _C.textMuted, fontSize: 12)),
                           trailing: invited
-                              ? const Icon(Icons.check_circle_rounded,
+                              ? Icon(Icons.check_circle_rounded,
                                   color: _C.green)
                               : sending
-                                  ? const SizedBox(
+                                  ? SizedBox(
                                       width: 20,
                                       height: 20,
                                       child: CircularProgressIndicator(
@@ -1303,9 +1330,9 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
                                       onPressed: () => _invite(friend),
                                       style: OutlinedButton.styleFrom(
                                         side:
-                                            const BorderSide(color: _C.blurple),
+                                            BorderSide(color: _C.blurple),
                                       ),
-                                      child: const Text('Convidar',
+                                      child: Text('Convidar',
                                           style: TextStyle(color: _C.blurple)),
                                     ),
                         );
@@ -1319,7 +1346,7 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
                 alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Fechar',
+                  child: Text('Fechar',
                       style: TextStyle(color: _C.textMuted)),
                 ),
               ),
@@ -1330,3 +1357,6 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
     );
   }
 }
+
+
+

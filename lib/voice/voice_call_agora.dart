@@ -68,7 +68,7 @@ class VoiceCallService {
   }) async {
     final appId = AppConfig.agoraAppId;
     if (appId.isEmpty) {
-      throw StateError('AGORA_APP_ID is not configured');
+      throw StateError('AGORA_APP_ID não configurado no .env');
     }
     _screenChannelName = channelName;
     _screenUid = kIsWeb ? null : screenShareUid;

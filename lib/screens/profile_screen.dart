@@ -168,7 +168,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         foregroundColor: _C.textHeader,
-        title: Text('Perfil',
+        title: const Text('Perfil',
             style: TextStyle(fontWeight: FontWeight.w700)),
       ),
       body: FutureBuilder<Profile>(
@@ -281,7 +281,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                         onPressed: () => _openEditSheet(profile),
                         icon: const Icon(Icons.edit_rounded,
                             size: 16, color: Colors.white),
-                        label: Text('Editar perfil',
+                        label: const Text('Editar perfil',
                             style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w600)),
@@ -454,7 +454,7 @@ class _FriendActionButton extends StatelessWidget {
             return OutlinedButton.icon(
               onPressed: null, // desabilitado: já esperando resposta
               icon: const Icon(Icons.hourglass_top_rounded, size: 16),
-              label: Text('Pedido enviado'),
+              label: const Text('Pedido enviado'),
               style: OutlinedButton.styleFrom(
                 side: BorderSide(color: _C.textMuted),
                 foregroundColor: _C.textMuted,
@@ -470,7 +470,7 @@ class _FriendActionButton extends StatelessWidget {
                 ElevatedButton.icon(
                   onPressed: () => onRespond(requestId!, true),
                   icon: const Icon(Icons.check_rounded, size: 16),
-                  label: Text('Aceitar pedido'),
+                  label: const Text('Aceitar pedido'),
                   style: ElevatedButton.styleFrom(backgroundColor: _C.blurple)
                 ),
                 const SizedBox(width: 8),
@@ -486,7 +486,7 @@ class _FriendActionButton extends StatelessWidget {
             return ElevatedButton.icon(
               onPressed: onSendRequest,
               icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
-              label: Text('Adicionar amigo'),
+              label: const Text('Adicionar amigo'),
               style: ElevatedButton.styleFrom(
                   backgroundColor: _C.blurple),
             );
@@ -636,7 +636,7 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Editar perfil',
+          const Text('Editar perfil',
               style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           Center(

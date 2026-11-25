@@ -6,7 +6,10 @@ plugins {
 
 android {
     namespace = "com.example.discord_app"
-    compileSdk = flutter.compileSdkVersion
+    // 37: exigido por androidx.fragment 1.7.1 / window 1.2.0 (SDK >= 34);
+    // plataforma android-37 instalada no SDK local.
+    compileSdk = 37
+    ndkVersion = flutter.ndkVersion
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

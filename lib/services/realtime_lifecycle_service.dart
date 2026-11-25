@@ -1,9 +1,10 @@
 import 'dart:async';
-import 'dart:html' as html show document, EventListener;
 
 import 'package:flutter/widgets.dart';
 
 import 'supabase_client.dart';
+import 'web_activity_stub.dart'
+    if (dart.library.html) 'web_activity_web.dart';
 
 /// ===========================================================================
 /// GERENCIAMENTO INTELIGENTE DE CONEXÕES REALTIME
@@ -49,8 +50,7 @@ class RealtimeLifecycleService with WidgetsBindingObserver {
   Timer? _tickTimer; // verificador periódico único
   DateTime _lastDisconnectAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _disconnected = false;
-  html.EventListener? _visibilityListener;
-  html.EventListener? _activityListener;
+  WebActivityHooks? _webHooks;
 
   /// Chamado SEMPRE que o serviço reconecta o Realtime (volta de aba
   /// oculta ou de AFK). As telas de chat escutam isto para refetch.
@@ -66,40 +66,24 @@ class RealtimeLifecycleService with WidgetsBindingObserver {
     _initialized = true;
     WidgetsBinding.instance.addObserver(this);
 
-    // ---- 1. ABA OCULTA (web) ----
-    _visibilityListener = (event) {
-      if (html.document.visibilityState == 'hidden') {
-        _hiddenAt = DateTime.now();
-      } else {
+    _webHooks = WebActivityHooks(
+      onHidden: () => _hiddenAt = DateTime.now(),
+      onVisible: () {
         if (_hiddenAt != null &&
             DateTime.now().difference(_hiddenAt!) > _hiddenDisconnectAfter) {
           _reconnect('aba voltou ao foco');
         }
         _hiddenAt = null;
-      }
-    };
-    html.document.addEventListener('visibilitychange', _visibilityListener);
-
-    // ---- 2. INATIVIDADE (AFK) ----
-    // Um ÚNICO listener que atualiza o timestamp de última interação.
-    // (mousemove dispara demais no web; throttle manual de 1s embutido
-    // pelo próprio custo do handler — só um assignment.)
-    _activityListener = (_) {
-      _lastInteraction = DateTime.now();
-    };
-    for (final type in [
-      'mousemove',
-      'keydown',
-      'click',
-      'scroll',
-      'touchstart'
-    ]) {
-      html.document.addEventListener(type, _activityListener);
-    }
+      },
+      onActivity: markActivity,
+    )..attach();
 
     // ---- verificador periódico (1x por segundo, bem barato) ----
     _tickTimer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
   }
+
+  /// Registra interação do usuário (reinicia o contador de AFK).
+  void markActivity() => _lastInteraction = DateTime.now();
 
   void _tick() {
     if (_disposed || _disconnected) return;
@@ -180,21 +164,7 @@ class RealtimeLifecycleService with WidgetsBindingObserver {
     _disposed = true;
     _tickTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    if (_visibilityListener != null) {
-      html.document
-          .removeEventListener('visibilitychange', _visibilityListener!);
-    }
-    if (_activityListener != null) {
-      for (final type in [
-        'mousemove',
-        'keydown',
-        'click',
-        'scroll',
-        'touchstart'
-      ]) {
-        html.document.removeEventListener(type, _activityListener!);
-      }
-    }
+    _webHooks?.detach();
     _onReconnectController.close();
     _initialized = false;
   }

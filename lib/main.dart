@@ -13,19 +13,65 @@ Future<void> main() async {
   // Necessário sempre que você faz algo assíncrono ANTES do runApp.
   WidgetsFlutterBinding.ensureInitialized();
 
-  await AppConfig.load();
-  await initSupabase();
+  try {
+    await AppConfig.load();
+    await initSupabase();
 
-  // Carrega o tema salvo ANTES do runApp — evita flash do tema claro
-  // quando o usuário escolheu o escuro na sessão anterior.
-  await AppTheme.load();
+    // Carrega o tema salvo ANTES do runApp — evita flash do tema claro
+    // quando o usuário escolheu o escuro na sessão anterior.
+    await AppTheme.load();
 
-  // Liga o gerenciamento inteligente de conexões Realtime: libera vagas
-  // do limite de 200 conexões do plano free desconectando usuários com
-  // aba oculta >30s ou inativos >5min (ver realtime_lifecycle_service).
-  RealtimeLifecycleService.instance.init();
+    // Liga o gerenciamento inteligente de conexões Realtime: libera vagas
+    // do limite de 200 conexões do plano free desconectando usuários com
+    // aba oculta >30s ou inativos >5min (ver realtime_lifecycle_service).
+    RealtimeLifecycleService.instance.init();
 
-  runApp(const CordApp());
+    runApp(const CordApp());
+  } catch (e) {
+    // Sem este fallback, qualquer falha na inicialização (ex: .env
+    // ausente/corrompido, Supabase inacessível) deixava o app preso na
+    // splash preta, sem desenhar NADA. Agora o usuário vê o motivo.
+    runApp(_BootErrorApp(error: e));
+  }
+}
+
+/// Tela de erro de inicialização — mostra o motivo em vez de tela preta.
+class _BootErrorApp extends StatelessWidget {
+  final Object error;
+  const _BootErrorApp({required this.error});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: const Color(0xFFF8FAFC),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline_rounded,
+                    color: Color(0xFFE11D48), size: 48),
+                const SizedBox(height: 16),
+                const Text('Erro ao iniciar',
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF0F172A))),
+                const SizedBox(height: 8),
+                Text('$error',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: Color(0xFF64748B), fontSize: 13)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class CordApp extends StatelessWidget {
@@ -75,6 +121,36 @@ class CordApp extends StatelessWidget {
           ),
         ),
         themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
+        // AFK multiplataforma: no mobile, sem eventos de mouse/teclado
+        // nativos, registramos cada toque/arrasto; no desktop, hover,
+        // rolagem (PointerSignal) e teclado (KeyEvent) também reiniciam o
+        // contador. No web, quem faz isso são os listeners de dart:html
+        // em web_activity_web.dart (o Listener abaixo é inofensivo lá).
+        builder: (context, child) => Focus(
+          // NÃO rouba o foco de campos de texto: skipTraversal evita que
+          // o Focus entre na navegação por Tab, e canRequestFocus:false
+          // garante que ele nunca demande o foco para si.
+          skipTraversal: true,
+          canRequestFocus: false,
+          descendantsAreFocusable: true,
+          onKeyEvent: (_, __) {
+            RealtimeLifecycleService.instance.markActivity();
+            return KeyEventResult.ignored; // propaga a tecla normalmente
+          },
+          child: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (_) =>
+                RealtimeLifecycleService.instance.markActivity(),
+            onPointerMove: (_) =>
+                RealtimeLifecycleService.instance.markActivity(),
+            // Desktop: mouse parado MAS mexendo (hover) e rolagem.
+            onPointerHover: (_) =>
+                RealtimeLifecycleService.instance.markActivity(),
+            onPointerSignal: (_) =>
+                RealtimeLifecycleService.instance.markActivity(),
+            child: child,
+          ),
+        ),
         home: const AuthGate(),
       ),
     );

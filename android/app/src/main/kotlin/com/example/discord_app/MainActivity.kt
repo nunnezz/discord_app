@@ -1,4 +1,4 @@
-package com.example.cord_app
+package com.example.discord_app
 
 import io.flutter.embedding.android.FlutterActivity
 

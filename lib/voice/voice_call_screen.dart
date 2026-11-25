@@ -655,7 +655,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
               Padding(
                 padding: const EdgeInsets.all(16),
                 child:
-                    Text(_errorMessage!, style: TextStyle(color: _C.red)),
+                    Text(_errorMessage!, style: const TextStyle(color: _C.red)),
               ),
             Expanded(
               child: _connecting
@@ -866,7 +866,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                       IconButton(
                         tooltip: 'Desconectar',
                         onPressed: _disconnect,
-                        icon: Icon(Icons.call_end_rounded, color: _C.red),
+                        icon: const Icon(Icons.call_end_rounded, color: _C.red),
                       ),
                     ],
                   ),

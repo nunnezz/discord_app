@@ -798,7 +798,7 @@ class _CordHomePageState extends State<CordHomePage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text('Excluir',
+            child: const Text('Excluir',
                 style: TextStyle(color: _C.red)),
           ),
         ],
@@ -1212,7 +1212,7 @@ class _TopNavBar extends StatelessWidget {
                             letterSpacing: -0.3)),
                   ),
                 ),
-                SizedBox(width: 20),
+                const SizedBox(width: 20),
                 // TABS PRINCIPAIS
                 _NavTab(
                   icon: Icons.home_rounded,
@@ -1221,14 +1221,14 @@ class _TopNavBar extends StatelessWidget {
                       selectedServerId == kBuiltInServerId,
                   onTap: onHomeTap,
                 ),
-                SizedBox(width: 6),
+                const SizedBox(width: 6),
                 _NavTab(
                   icon: Icons.chat_bubble_rounded,
                   label: 'Mensagens',
                   isActive: isFriendsActive,
                   onTap: onMessagesTap,
                 ),
-                SizedBox(width: 6),
+                const SizedBox(width: 6),
                 // Aba Configurações: abre a tela dedicada.
                 _NavTab(
                   icon: Icons.settings_rounded,
@@ -1241,7 +1241,7 @@ class _TopNavBar extends StatelessWidget {
                     ),
                   ),
                 ),
-                SizedBox(width: 6),
+                const SizedBox(width: 6),
                 // Servidores como "tabs" com dropdown + botão de criar.
                 PopupMenuButton<String>(
                   tooltip: 'Servidores',
@@ -1269,7 +1269,7 @@ class _TopNavBar extends StatelessWidget {
                       child: Row(children: [
                         Icon(Icons.add_circle_outline_rounded,
                             size: 18, color: _C.blurple),
-                        SizedBox(width: 8),
+                        const SizedBox(width: 8),
                         Text('Criar novo servidor',
                             style: TextStyle(
                                 color: _C.textHeader,
@@ -1293,14 +1293,14 @@ class _TopNavBar extends StatelessWidget {
                             color: !isFriendsActive
                                 ? _C.blurple
                                 : _C.textMuted),
-                        SizedBox(width: 6),
+                        const SizedBox(width: 6),
                         Text(currentServerName,
                             style: TextStyle(
                                 color: !isFriendsActive
                                     ? _C.textHeader
                                     : _C.textNormal,
                                 fontWeight: FontWeight.w600)),
-                        SizedBox(width: 4),
+                        const SizedBox(width: 4),
                         Icon(Icons.expand_more_rounded,
                             size: 18, color: _C.textMuted),
                       ],
@@ -1355,7 +1355,7 @@ class _NavTab extends StatelessWidget {
             Icon(icon,
                 size: 19,
                 color: isActive ? _C.blurple : _C.textMuted),
-            SizedBox(width: 6),
+            const SizedBox(width: 6),
             Text(label,
                 style: TextStyle(
                     color: isActive ? _C.textHeader : _C.textNormal,
@@ -1397,7 +1397,7 @@ class _ServerRail extends StatelessWidget {
       color: _C.darkest,
       child: Column(
         children: [
-          SizedBox(height: 12),
+          const SizedBox(height: 12),
           // "Home" — abre a área de Amigos/DMs, separada dos servidores.
           _RailIcon(
             tooltip: 'Amigos',
@@ -1405,9 +1405,9 @@ class _ServerRail extends StatelessWidget {
             icon: Icons.people_alt_rounded,
             onTap: onHomeTap,
           ),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           Container(height: 2, width: 32, color: _C.divider),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           // Lista de servidores: o "Cord" fixo primeiro, depois os
           // servidores reais que o usuário criou/participa.
           Expanded(
@@ -1422,7 +1422,7 @@ class _ServerRail extends StatelessWidget {
                   onTap: () => onSelectServer(kBuiltInServerId),
                 ),
                 for (final server in servers) ...[
-                  SizedBox(height: 8),
+                  const SizedBox(height: 8),
                   _RailIcon(
                     tooltip: server.name,
                     isActive: !isFriendsActive && selectedServerId == server.id,
@@ -1460,7 +1460,7 @@ class _ServerRail extends StatelessWidget {
             icon: Icon(Icons.logout_rounded, color: _C.textMuted),
             onPressed: () => AuthService.signOut(),
           ),
-          SizedBox(height: 12),
+          const SizedBox(height: 12),
         ],
       ),
     );
@@ -1554,12 +1554,12 @@ class _CreateServerDialogState extends State<_CreateServerDialog> {
                     color: Colors.white,
                     fontSize: 18,
                     fontWeight: FontWeight.bold)),
-            SizedBox(height: 4),
+            const SizedBox(height: 4),
             Text(
               'Seu novo servidor já nasce com um canal de texto ("geral") e um de voz.',
               style: TextStyle(color: _C.textMuted, fontSize: 13),
             ),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             TextField(
               controller: _nameController,
               autofocus: true,
@@ -1589,7 +1589,7 @@ class _CreateServerDialogState extends State<_CreateServerDialog> {
               activeThumbColor: _C.blurple,
               onChanged: (value) => setState(() => _isPublic = value),
             ),
-            SizedBox(height: 20),
+            const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
@@ -1604,7 +1604,7 @@ class _CreateServerDialogState extends State<_CreateServerDialog> {
                         style: TextStyle(color: Colors.white)),
                   ),
                 ),
-                SizedBox(width: 12),
+                const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () => Navigator.of(context).pop(_serverData),
@@ -1707,10 +1707,10 @@ class _PublicServersDialogState extends State<_PublicServersDialog> {
               ),
             ),
             if (_error != null) ...[
-              SizedBox(height: 8),
+              const SizedBox(height: 8),
               Text(_error!, style: const TextStyle(color: Colors.redAccent)),
             ],
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
@@ -1733,7 +1733,7 @@ class _PublicServersDialogState extends State<_PublicServersDialog> {
                                     ? () => _join(server)
                                     : null,
                                 child: _joiningServerId == server.id
-                                    ? SizedBox(
+                                    ? const SizedBox(
                                         width: 18,
                                         height: 18,
                                         child: CircularProgressIndicator(
@@ -1926,7 +1926,7 @@ class _CategorySection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(height: 12),
+        const SizedBox(height: 12),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Row(
@@ -1944,7 +1944,7 @@ class _CategorySection extends StatelessWidget {
                   onTap: () =>
                       onCreateChannel!(isVoiceCategory ? ChannelType.voice : ChannelType.text),
                   child: Padding(
-                    padding: EdgeInsets.all(2),
+                    padding: const EdgeInsets.all(2),
                     child: Icon(Icons.add_rounded,
                         color: _C.textMuted, size: 18),
                   ),
@@ -2016,7 +2016,7 @@ class _ChannelTileState extends State<_ChannelTile> {
                   size: 20,
                   color: widget.isSelected ? _C.textNormal : _C.textMuted,
                 ),
-                SizedBox(width: 6),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     widget.channel.label,
@@ -2056,12 +2056,12 @@ class _ChannelTileState extends State<_ChannelTile> {
                           child: Row(children: [
                             Icon(Icons.edit_rounded,
                                 size: 16, color: _C.textMuted),
-                            SizedBox(width: 8),
-                            Text('Renomear',
+                            const SizedBox(width: 8),
+                            const Text('Renomear',
                                 style: TextStyle(fontSize: 14)),
                           ]),
                         ),
-                        PopupMenuItem(
+                        const PopupMenuItem(
                           value: 'delete',
                           height: 36,
                           child: Row(children: [
@@ -2184,7 +2184,7 @@ class _UserFooter extends StatelessWidget {
                           : null,
                     ),
                   ),
-                  SizedBox(width: 8),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(displayName,
                         overflow: TextOverflow.ellipsis,
@@ -2327,7 +2327,7 @@ class _FriendsSidebarState extends State<_FriendsSidebar> {
                 ),
 
                 Padding(
-                  padding: EdgeInsets.fromLTRB(16, 12, 8, 4),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
                   child: Text('CONVERSAS PRIVADAS',
                       style: TextStyle(
                           color: _C.textMuted,
@@ -2339,7 +2339,7 @@ class _FriendsSidebarState extends State<_FriendsSidebar> {
                   builder: (context, snapshot) {
                     if (!snapshot.hasData) {
                       return Padding(
-                        padding: EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(16),
                         child: Center(
                             child: CircularProgressIndicator(
                                 color: _C.blurple, strokeWidth: 2)),
@@ -2348,7 +2348,7 @@ class _FriendsSidebarState extends State<_FriendsSidebar> {
                     final conversations = snapshot.data!;
                     if (conversations.isEmpty) {
                       return Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 16),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: Text('Nenhuma conversa ainda.',
                             style:
                                 TextStyle(color: _C.textMuted, fontSize: 13)),
@@ -2415,7 +2415,7 @@ class _PendingRequestRow extends StatelessWidget {
                     style: const TextStyle(color: Colors.white, fontSize: 11))
                 : null,
           ),
-          SizedBox(width: 8),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               request.otherUser.displayName,
@@ -2439,7 +2439,7 @@ class _PendingRequestRow extends StatelessWidget {
             iconSize: 18,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            icon: Icon(Icons.cancel_rounded, color: Color(0xFFDA373C)),
+            icon: const Icon(Icons.cancel_rounded, color: Color(0xFFDA373C)),
             onPressed: onReject,
           ),
         ],
@@ -2512,7 +2512,7 @@ class _NavRowState extends State<_NavRow> {
                                 color: Colors.white, fontSize: 11))
                         : null,
                   ),
-                SizedBox(width: 10),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     widget.label,
@@ -2578,7 +2578,7 @@ class _FriendsMainPanelState extends State<_FriendsMainPanel> {
               children: [
                 Icon(Icons.people_alt_rounded,
                     color: _C.textMuted, size: 20),
-                SizedBox(width: 8),
+                const SizedBox(width: 8),
                 Text('Amigos',
                     style: TextStyle(
                         color: _C.textHeader,
@@ -2595,7 +2595,7 @@ class _FriendsMainPanelState extends State<_FriendsMainPanel> {
                     _refresh();
                   },
                   style: ElevatedButton.styleFrom(backgroundColor: _C.blurple),
-                  icon: Icon(Icons.person_add_alt_1_rounded, size: 16),
+                  icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
                   label: const Text('Adicionar amigo'),
                 ),
               ],
@@ -2708,7 +2708,7 @@ class _DmChatArea extends StatelessWidget {
                               color: Colors.white, fontSize: 12))
                       : null,
                 ),
-                SizedBox(width: 8),
+                const SizedBox(width: 8),
                 Text(conversation.otherUser.displayName,
                     style: TextStyle(color: _C.textHeader,
                         fontWeight: FontWeight.bold,
@@ -2915,7 +2915,7 @@ class _DmMessagesListState extends State<_DmMessagesList> {
                                     style: TextStyle(color: _C.blurple,
                                         fontWeight: FontWeight.w700,
                                         fontSize: 12.5)),
-                                SizedBox(width: 6),
+                                const SizedBox(width: 6),
                                 Text(
                                     DateFormat('HH:mm')
                                         .format(message.createdAt),
@@ -3098,7 +3098,7 @@ class _VoiceInviteCardState extends State<_VoiceInviteCard> {
         child: Row(
           children: [
             Icon(Icons.timer_off_rounded, color: _C.textMuted),
-            SizedBox(width: 10),
+            const SizedBox(width: 10),
             Text(
               'Convite para chamada expirado',
               style: TextStyle(color: _C.textMuted, fontSize: 13),
@@ -3121,7 +3121,7 @@ class _VoiceInviteCardState extends State<_VoiceInviteCard> {
         child: Row(
           children: [
             Icon(Icons.call_rounded, color: _C.blurple),
-            SizedBox(width: 10),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -3192,7 +3192,7 @@ class _ChatArea extends StatelessWidget {
             child: Row(
               children: [
                 Icon(Icons.tag_rounded, color: _C.textMuted, size: 22),
-                SizedBox(width: 6),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(displayName,
                       overflow: TextOverflow.ellipsis,
@@ -3333,7 +3333,7 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
                     color: Colors.white,
                     fontSize: 18,
                     fontWeight: FontWeight.bold)),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             TextField(
               controller: _usernameController,
               autofocus: true,
@@ -3351,12 +3351,12 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
               ),
             ),
             if (_errorMessage != null) ...[
-              SizedBox(height: 8),
+              const SizedBox(height: 8),
               Text(_errorMessage!,
                   style:
                       const TextStyle(color: Color(0xFFFF8B8B), fontSize: 13)),
             ],
-            SizedBox(height: 20),
+            const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
@@ -3373,7 +3373,7 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
                         style: TextStyle(color: Colors.white)),
                   ),
                 ),
-                SizedBox(width: 12),
+                const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton(
                     onPressed: _isSubmitting ? null : _handleAddFriend,
@@ -3383,7 +3383,7 @@ class _AddFriendDialogState extends State<_AddFriendDialog> {
                           borderRadius: BorderRadius.circular(4)),
                     ),
                     child: _isSubmitting
-                        ? SizedBox(
+                        ? const SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(
@@ -3592,7 +3592,7 @@ class _MessageBubble extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                           fontSize: 12.5)),
                 ),
-                SizedBox(width: 6),
+                const SizedBox(width: 6),
                 Text(_formatTime(message.createdAt),
                     style: TextStyle(color: _C.textMuted, fontSize: 10.5)),
               ],
@@ -3806,7 +3806,7 @@ class _ImageLightbox extends StatelessWidget {
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: IconButton(
-                    icon: Icon(Icons.close_rounded,
+                    icon: const Icon(Icons.close_rounded,
                         color: Colors.white),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
@@ -4052,7 +4052,7 @@ class _MessageInputBarState extends State<_MessageInputBar> {
               ),
               child: IconButton(
                 tooltip: 'Enviar mensagem',
-                icon: Icon(Icons.send_rounded,
+                icon: const Icon(Icons.send_rounded,
                     color: Colors.white, size: 20),
                 onPressed: widget.onSend,
               ),
@@ -4238,14 +4238,14 @@ class _MobileFriendsScreenState extends State<_MobileFriendsScreen> {
             builder: (context, snapshot) {
               if (!snapshot.hasData) {
                 return Padding(
-                  padding: EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(16),
           child: Center(child: CircularProgressIndicator(color: _C.blurple)),
                 );
               }
               final friends = snapshot.data!;
               if (friends.isEmpty) {
                 return Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Text('Nenhum amigo ainda.',
                       style: TextStyle(color: _C.textMuted)),
                 );
@@ -4287,14 +4287,14 @@ class _MobileFriendsScreenState extends State<_MobileFriendsScreen> {
             builder: (context, snapshot) {
               if (!snapshot.hasData) {
                 return Padding(
-                  padding: EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(16),
           child: Center(child: CircularProgressIndicator(color: _C.blurple)),
                 );
               }
               final conversations = snapshot.data!;
               if (conversations.isEmpty) {
                 return Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Text('Nenhuma conversa ainda.',
                       style: TextStyle(color: _C.textMuted)),
                 );

@@ -1,1 +1,28 @@
 Analyzing lib...
+
+warning - auth\auth_screen.dart:8:16 - The value of the field 'textMuted' isn't used. Try removing the field, or using it. - unused_field
+warning - screens\cord_home_page.dart:61:20 - The declaration 'mintSoft' isn't referenced. Try removing the declaration of 'mintSoft'. - unused_element
+warning - screens\cord_home_page.dart:64:16 - The value of the field 'violet' isn't used. Try removing the field, or using it. - unused_field
+warning - screens\cord_home_page.dart:730:8 - The declaration '_isVoiceCategoryTitle' isn't referenced. Try removing the declaration of '_isVoiceCategoryTitle'. - unused_element
+warning - screens\profile_screen.dart:21:16 - The value of the field 'violet' isn't used. Try removing the field, or using it. - unused_field
+warning - screens\profile_screen.dart:24:20 - The declaration 'textNormal' isn't referenced. Try removing the declaration of 'textNormal'. - unused_element
+warning - screens\profile_screen.dart:32:16 - The value of the field 'red' isn't used. Try removing the field, or using it. - unused_field
+warning - screens\profile_screen.dart:34:20 - The declaration 'card' isn't referenced. Try removing the declaration of 'card'. - unused_element
+warning - theme\app_theme.dart:19:15 - The value of the field '_loaded' isn't used. Try removing the field, or using it. - unused_field
+warning - voice\voice_call_screen.dart:86:30 - The declaration 'softShadow' isn't referenced. Try removing the declaration of 'softShadow'. - unused_element
+   info - main.dart:117:43 - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss. Try replacing the use of the deprecated member with the replacement. - deprecated_member_use
+   info - screens\cord_home_page.dart:430:30 - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check. Guard a 'State.context' use with a 'mounted' check on the State, and other BuildContext use with a 'mounted' check on the BuildContext. - use_build_context_synchronously
+   info - screens\cord_home_page.dart:459:27 - Don't use 'BuildContext's across async gaps. Try rewriting the code to not use the 'BuildContext', or guard the use with a 'mounted' check. - use_build_context_synchronously
+   info - screens\cord_home_page.dart:461:36 - Don't use 'BuildContext's across async gaps. Try rewriting the code to not use the 'BuildContext', or guard the use with a 'mounted' check. - use_build_context_synchronously
+   info - screens\cord_home_page.dart:463:29 - Don't use 'BuildContext's across async gaps. Try rewriting the code to not use the 'BuildContext', or guard the use with a 'mounted' check. - use_build_context_synchronously
+   info - screens\cord_home_page.dart:489:30 - Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check. Guard a 'State.context' use with a 'mounted' check on the State, and other BuildContext use with a 'mounted' check on the BuildContext. - use_build_context_synchronously
+   info - screens\profile_screen.dart:323:39 - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss. Try replacing the use of the deprecated member with the replacement. - deprecated_member_use
+   info - screens\profile_screen.dart:365:48 - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss. Try replacing the use of the deprecated member with the replacement. - deprecated_member_use
+   info - screens\settings_screen.dart:427:13 - 'activeColor' is deprecated and shouldn't be used. Use activeThumbColor instead. This feature was deprecated after v3.31.0-2.0.pre. Try replacing the use of the deprecated member with the replacement. - deprecated_member_use
+   info - screens\voice_call_screen.dart:495:44 - 'scale' is deprecated and shouldn't be used. Use scaleByVector3, scaleByVector4, or scaleByDouble instead. Try replacing the use of the deprecated member with the replacement. - deprecated_member_use
+   info - services\supabase_client.dart:17:5 - 'anonKey' is deprecated and shouldn't be used. Use publishableKey instead. anonKey will be removed in a future major version. Try replacing the use of the deprecated member with the replacement. - deprecated_member_use
+   info - services\web_activity_web.dart:1:1 - 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead. Try replacing the use of the deprecated member with the replacement. - deprecated_member_use
+   info - services\web_activity_web.dart:1:1 - Don't use web-only libraries outside Flutter web plugins. Try finding a different library for your needs. - avoid_web_libraries_in_flutter
+   info - voice\voice_call_screen.dart:1182:44 - 'scale' is deprecated and shouldn't be used. Use scaleByVector3, scaleByVector4, or scaleByDouble instead. Try replacing the use of the deprecated member with the replacement. - deprecated_member_use
+
+24 issues found.

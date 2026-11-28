@@ -10,7 +10,16 @@ android {
     // plataforma android-37 instalada no SDK local.
     compileSdk = 37
     ndkVersion = flutter.ndkVersion
-    ndkVersion = flutter.ndkVersion
+
+    // O aapt do Android EXCLUI arquivos que começam com ponto (padrão
+    // "!.*" no ignoreAssetsPattern) — sem esta linha o .env não entra no
+    // APK e o dotenv carrega vazio (App ID da call "não configurado").
+    // O aapt do Android EXCLUI arquivos que começam com ponto (o padrão
+    // termina em "!.dcf" e tem "!" que filtra tudo). No AGP 9, a forma
+    // segura é definir o padrão completo incluindo .env explicitamente.
+    androidResources {
+        ignoreAssetsPattern = "!.svn:!.git:!.gitignore:!.ds_store:!.srt:!._:!.env:.env.example"
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

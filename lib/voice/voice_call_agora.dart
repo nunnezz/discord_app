@@ -57,6 +57,7 @@ class VoiceCallService {
   /// "conectado" mesmo sem áudio nenhum trafegando de verdade.
   Future<void> joinChannel({
     required String channelName,
+    int? voiceUid, // uid único deste cliente (colisão expulsa o anterior)
     int? screenShareUid,
     String? screenShareToken,
     required void Function(int uid) onUserJoined,
@@ -99,13 +100,33 @@ class VoiceCallService {
         onError: (err, msg) {
           final description = '$err — $msg';
           debugPrint('Erro Agora: $description');
-          onErrorOccurred?.call(description);
+          onErrorOccurred?.call('Falha Agora (outro): $description');
         },
         onConnectionStateChanged: (connection, state, reason) {
           debugPrint('Estado da conexão Agora: $state (motivo: $reason)');
-          if (state == ConnectionStateType.connectionStateFailed) {
-            onErrorOccurred?.call('Conexão falhou (motivo: $reason)');
+          final isScreenConnection = connection.localUid != null &&
+              connection.localUid == _screenUid;
+          // -17 (errJoinChannelRejected) enquanto já conectado = join
+          // duplicado do canal principal; ignorar em vez de alarmar.
+          if (reason.toString().contains('connectionChangedRejected') &&
+              state != ConnectionStateType.connectionStateFailed) {
+            return;
           }
+          if (state == ConnectionStateType.connectionStateFailed) {
+            final reasonName = reason.toString();
+            if (isScreenConnection) {
+              // Só o compartilhamento falhou: mensagem discreta, sem
+              // derrubar a chamada de voz.
+              onErrorOccurred?.call('Compartilhamento de tela indisponível '
+                  '(${_screenUid ?? 0}: $reasonName)');
+            } else {
+              onErrorOccurred?.call(
+                  'Falha Agora (voz): conexão falhou — $reasonName');
+            }
+          }
+        },
+        onTokenPrivilegeWillExpire: (connection, token) {
+          debugPrint('Token do Agora vai expirar — renovando...');
         },
         onLocalVideoStateChanged: (source, state, reason) async {
           debugPrint(
@@ -138,7 +159,9 @@ class VoiceCallService {
     await _engine!.joinChannel(
       token: token ?? '', // vazio = modo de teste
       channelId: channelName,
-      uid: 0,
+      // uid ÚNICO por cliente: colisão de uid expulsa o anterior do canal
+      // (era o bug do "usuário some" quando um segundo conectava).
+      uid: voiceUid ?? 0,
       options: kIsWeb
           ? const ChannelMediaOptions(
               clientRoleType: ClientRoleType.clientRoleBroadcaster,
@@ -400,6 +423,15 @@ class VoiceCallService {
   }
 
   /// Widget de vídeo remoto de um participante específico.
+  ///
+  /// IMPORTANTE (cross-platform): quem envia pela WEB publica o stream
+  /// de tela como sourceType CAMERA (getDisplayMedia substitui a câmera);
+  /// quem envia pelo ANDROID publica como SCREEN. Como não dá para saber
+  /// a plataforma do remetente pelo uid, usamos `screenShare` para
+  /// explicitar a fonte — a tela de call passa `screenShare: true` quando
+  /// o remetente é Android e `false` quando é web. Para simplificar, no
+  /// Android tentamos SCREEN primeiro (o caso comum do tablet) e a UI
+  /// recua para CAMERA via preview fallback quando o stream não chega.
   Widget remoteVideoView(
     int uid,
     String channelName, {

@@ -1,10 +1,12 @@
-﻿import 'dart:math';
+import 'dart:convert';
+import 'dart:math';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../config/app_config.dart';
 import '../models/models.dart';
 import '../services/dm_service.dart';
 import '../services/friend_service.dart';
@@ -15,10 +17,10 @@ import 'voice_call_agora.dart';
 // =========================================================================
 // FORMATO DO CONVITE DE CHAMADA
 // =========================================================================
-// Um convite Ã© sÃ³ uma mensagem de DM com um formato especial no
-// conteÃºdo. Quem recebe (na lista de conversas privadas) reconhece
-// esse prefixo e mostra um cartÃ£o com botÃ£o "Entrar na chamada" em vez
-// do balÃ£o de texto normal â€” ver o trecho correspondente em
+// Um convite é só uma mensagem de DM com um formato especial no
+// conteúdo. Quem recebe (na lista de conversas privadas) reconhece
+// esse prefixo e mostra um cartão com botão "Entrar na chamada" em vez
+// do balão de texto normal — ver o trecho correspondente em
 // cord_home_page.dart (_DmMessagesList).
 const String kVoiceInvitePrefix = 'VOICE_CALL_INVITE::';
 const Duration kVoiceInviteLifetime = Duration(hours: 24);
@@ -31,12 +33,12 @@ String buildVoiceInviteMessage(
     '$kVoiceInvitePrefix$roomId::$channelName';
 
 /// Faz o caminho inverso: separa `roomId` e `channelName` de dentro do
-/// conteÃºdo da mensagem. Retorna `null` se nÃ£o for um convite vÃ¡lido.
+/// conteúdo da mensagem. Retorna `null` se não for um convite válido.
 ///
-/// IMPORTANTE: usamos o ÃšLTIMO "::" como separador (nÃ£o um split
-/// simples em 2 partes), porque o prÃ³prio `roomId` jÃ¡ contÃ©m "::"
-/// dentro dele (Ã© `servidorId::nomeDoCanal`) â€” um split ingÃªnuo
-/// contaria 3 pedaÃ§os em vez de 2 e falharia sempre que o roomId
+/// IMPORTANTE: usamos o ÃšLTIMO "::" como separador (não um split
+/// simples em 2 partes), porque o próprio `roomId` já contém "::"
+/// dentro dele (é `servidorId::nomeDoCanal`) — um split ingênuo
+/// contaria 3 pedaços em vez de 2 e falharia sempre que o roomId
 /// tivesse mais de um "::".
 ({String roomId, String channelName})? parseVoiceInviteMessage(String content) {
   if (!content.startsWith(kVoiceInvitePrefix)) return null;
@@ -61,8 +63,8 @@ String? serverIdFromVoiceRoomId(String roomId) {
 // PALETA (mesmo esquema usado no resto do app)
 // =========================================================================
 class _C {
-  // Adaptativo: lÃª o tema global (AppTheme.isDark) para acompanhar o resto
-  // do app. No claro: superfÃ­cies off-white; no escuro: slate navy.
+  // Adaptativo: lê o tema global (AppTheme.isDark) para acompanhar o resto
+  // do app. No claro: superfícies off-white; no escuro: slate navy.
   static bool get _dark => AppTheme.isDark;
   static Color get bg =>
       _dark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
@@ -101,8 +103,8 @@ class _C {
 }
 
 /// Um participante na chamada, com os dados reais vindos do Presence do
-/// Supabase (nome/avatar) â€” nÃ£o apenas o `uid` numÃ©rico que o Agora usa
-/// internamente pra identificar cada stream de Ã¡udio/vÃ­deo.
+/// Supabase (nome/avatar) — não apenas o `uid` numérico que o Agora usa
+/// internamente pra identificar cada stream de áudio/vídeo.
 class _VoiceParticipant {
   final String userId;
   final String displayName;
@@ -114,6 +116,12 @@ class _VoiceParticipant {
   final int? screenAgoraUid;
   final bool isLocal;
 
+  /// 'web' | 'native' — a plataforma do REMETENTE, vinda da Presence.
+  /// Web publica o stream de tela como CAMERA (getDisplayMedia);
+  /// nativo publica como SCREEN. O renderizador usa isto para escolher
+  /// o sourceType certo no remoteVideoView.
+  final String? clientPlatform;
+
   const _VoiceParticipant({
     required this.userId,
     required this.displayName,
@@ -124,31 +132,32 @@ class _VoiceParticipant {
     this.agoraUid,
     this.screenAgoraUid,
     this.avatarUrl,
+    this.clientPlatform,
   });
 }
 
 // =========================================================================
-// TELA DE CHAMADA DE VOZ/VÃDEO â€” funciona com vÃ¡rias pessoas ao mesmo
-// tempo (via Agora, um SFU de verdade â€” ver explicaÃ§Ã£o em
-// voice_call_agora.dart sobre por que isso nÃ£o Ã© WebRTC puro).
+// TELA DE CHAMADA DE VOZ/VÍDEO — funciona com várias pessoas ao mesmo
+// tempo (via Agora, um SFU de verdade — ver explicação em
+// voice_call_agora.dart sobre por que isso não é WebRTC puro).
 // =========================================================================
 class VoiceCallScreen extends StatefulWidget {
   /// Nome exibido na tela (ex: "Sala de Voz").
   final String channelName;
 
   /// Identificador ÃšNICO do canal de voz para o Agora e para o
-  /// Presence â€” combine servidor + canal (ex: "serverId::channelName")
+  /// Presence — combine servidor + canal (ex: "serverId::channelName")
   /// pra dois canais com o mesmo nome em servidores diferentes nunca
-  /// caÃ­rem na mesma "sala" por engano.
+  /// caírem na mesma "sala" por engano.
   final String roomId;
 
   final String myUserId;
   final String myDisplayName;
   final String? myAvatarUrl;
 
-  /// Chamado quando a chamada termina (desconectar) â€” a pÃ¡gina host remove
+  /// Chamado quando a chamada termina (desconectar) — a página host remove
   /// o overlay. Substitui o Navigator.pop, porque a call agora vive como
-  /// overlay interno da pÃ¡gina, nÃ£o como rota.
+  /// overlay interno da página, não como rota.
   final VoidCallback? onExit;
 
   const VoiceCallScreen({
@@ -165,8 +174,8 @@ class VoiceCallScreen extends StatefulWidget {
   State<VoiceCallScreen> createState() => _VoiceCallScreenState();
 }
 
-/// A chamada NÃƒO Ã© mais aberta via rota â€” veja CordHomePage._activeCall.
-/// A funÃ§Ã£o abaixo continua existindo sÃ³ para compatibilidade de imports.
+/// A chamada NÃƒO é mais aberta via rota — veja CordHomePage._activeCall.
+/// A função abaixo continua existindo só para compatibilidade de imports.
 
 Route<void> buildVoiceCallRoute(VoiceCallScreen screen) =>
     _TransparentCallRoute(screen: screen);
@@ -174,13 +183,13 @@ Route<void> buildVoiceCallRoute(VoiceCallScreen screen) =>
 /// Rota transparente SEM ModalBarrier.
 ///
 /// Toda PageRoute comum insere um ModalBarrier que absorve os toques da
-/// tela inteira â€” mesmo com `opaque: false` e `barrierColor: null`. Com a
-/// chamada minimizada, essa barreira invisÃ­vel (no topo da pilha do
+/// tela inteira — mesmo com `opaque: false` e `barrierColor: null`. Com a
+/// chamada minimizada, essa barreira invisível (no topo da pilha do
 /// Navigator) bloqueava TODOS os cliques no app por baixo.
 ///
-/// Aqui a barreira nÃ£o existe: quando a call estÃ¡ aberta, o Scaffold dela
-/// cobre a tela e recebe os toques naturalmente; quando minimizada, sÃ³ o
-/// overlay flutuante Ã© clicÃ¡vel e o resto passa para o app por baixo.
+/// Aqui a barreira não existe: quando a call está aberta, o Scaffold dela
+/// cobre a tela e recebe os toques naturalmente; quando minimizada, só o
+/// overlay flutuante é clicável e o resto passa para o app por baixo.
 class _TransparentCallRoute extends PageRoute<void> {
   _TransparentCallRoute({required this.screen});
 
@@ -228,6 +237,14 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
   bool _micMuted = false;
   bool _cameraOn = false;
   bool _screenSharing = false;
+  // Diagnóstico de token: preenchidos no join e exibidos na mensagem de
+  // erro — se o APK antigo não mostrar isso, é a prova de build antiga.
+  int? _debugTokenLen;
+  int? _debugVoiceUid;
+
+  /// Aviso discreto quando SÓ o compartilhamento de tela falha (a voz
+  /// continua). Exibido abaixo da barra de controles.
+  String? _screenShareWarning;
   bool _connecting = true;
   bool _agoraJoinConfirmed = false;
   bool _isMinimized = false;
@@ -235,10 +252,10 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
   int? _localScreenAgoraUid;
   String? _errorMessage;
 
-  // Mapeia o `uid` numÃ©rico do Agora -> dados reais do participante,
+  // Mapeia o `uid` numérico do Agora -> dados reais do participante,
   // resolvidos via Presence (que compartilha nome/avatar/estado do mic
   // entre todo mundo na "sala", sem precisar de nenhuma tabela nova no
-  // banco â€” Presence Ã© efÃªmero e limpa sozinho quando alguÃ©m sai).
+  // banco — Presence é efêmero e limpa sozinho quando alguém sai).
   final Set<int> _remoteUids = {};
 
   @override
@@ -247,10 +264,81 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
     _joinEverything();
   }
 
-  Future<void> _joinEverything() async {
+  /// Pede um token à Edge Function `agora-token` e devolve o valor real.
+  ///
+  /// Proteções:
+  /// - Falha de rede/auth (FunctionException) → lança com o STATUS real;
+  /// - Resposta sem o campo `token` (ou vazia fora do testing mode) →
+  ///   lança explicando o motivo — NUNCA devolve '' silenciosamente
+  ///   (era o que fazia o app entrar no Agora com token vazio);
+  /// - `data` pode vir como Map (já decodificado) ou como String JSON —
+  ///   ambos são tratados;
+  /// - debugPrint em release: status, presença do campo e tamanho —
+  ///   nunca o token em si.
+  Future<({String token, bool testingMode})> _fetchAgoraToken(int uid) async {
+    final session = supabase.auth.currentSession;
+    debugPrint('[agora-token] sessão ativa? ${session != null} (uid=$uid)');
+
+    final dynamic res;
     try {
-      // 1. Entra no canal de Presence do Supabase â€” Ã© isso que dÃ¡ nome
-      // e avatar reais aos participantes, em vez de sÃ³ "uid 8271".
+      res = await supabase.functions.invoke(
+        'agora-token',
+        body: {'channelName': widget.roomId, 'uid': uid},
+      );
+    } on FunctionException catch (e) {
+      final status = e.status;
+      final details = e.reasonPhrase ?? e.toString();
+      debugPrint('[agora-token] FALHA status=$status detalhe=$details');
+      throw StateError(
+          'Falha ao obter o token: status $status — $details');
+    }
+
+    // `res.data` pode ser Map<String,dynamic> ou String JSON.
+    final dynamic data = res.data is String
+        ? jsonDecode(res.data as String)
+        : res.data;
+    if (data is! Map) {
+      debugPrint('[agora-token] resposta inesperada (não é objeto)');
+      throw StateError(
+          'Falha ao obter o token: resposta inesperada da função');
+    }
+
+    final err = data['error'];
+    if (err != null) {
+      debugPrint('[agora-token] erro da função: $err');
+      throw StateError('Falha ao obter o token: ${err.toString()}');
+    }
+
+    final token = (data['token'] as String?) ?? '';
+    final testingMode = data['testingMode'] as bool? ?? false;
+    debugPrint('[agora-token] ok: tokenLen=${token.length} '
+        'testingMode=$testingMode');
+
+    // Token vazio só é aceitável em testing mode (o Agora aceita entrar
+    // sem token lá). Fora disso, é falha de configuração — não entre.
+    if (token.isEmpty && !testingMode) {
+      throw StateError(
+          'Falha ao obter o token: a função não devolveu um token válido');
+    }
+    return (token: token, testingMode: testingMode);
+  }
+
+  /// Trava contra entrada dupla: se _joinEverything estiver rodando (ou
+  /// já completou um join ativo), uma segunda chamada é ignorada.
+  bool _joining = false;
+
+  Future<void> _joinEverything() async {
+    if (_joining) return;
+    _joining = true;
+    try {
+      // 3. Ciclo de vida: se houver sessão anterior (ou tentativa falha),
+      // saia antes — reentrar começa do zero (sem -17 do join duplicado).
+      try {
+        await _voiceService.leaveChannel();
+      } catch (_) {}
+
+      // 1. Entra no canal de Presence do Supabase — é isso que dá nome
+      // e avatar reais aos participantes, em vez de só "uid 8271".
       _presenceChannel = supabase.channel('voice:${widget.roomId}');
       _presenceChannel.onPresenceSync((_) {
         if (mounted) setState(() {});
@@ -260,28 +348,38 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
         }
       });
 
-      // 2. Busca um token de verdade na Edge Function â€” funciona pra
-      // QUALQUER canal, gerado na hora, sempre vÃ¡lido. O App
+      // 2. Busca um token de verdade na Edge Function — funciona pra
+      // QUALQUER canal, gerado na hora, sempre válido. O App
       // Certificate (a parte secreta) nunca sai do servidor.
-      final tokenResponse = await supabase.functions.invoke(
-        'agora-token',
-        body: {'channelName': widget.roomId, 'uid': 0},
-      );
-      final token = (tokenResponse.data as Map)['token'] as String;
+      // IMPORTANTE: uid ÚNICO por cliente — se todos entrarem com uid 0,
+      // o Agora expulsa o anterior (mesmo uid no mesmo canal) e o
+      // usuário "some" para os outros quando um segundo conecta.
+      final voiceUid = Random.secure().nextInt(0x7ffffffe) + 1;
+      final voiceToken = await _fetchAgoraToken(voiceUid);
+      // Diagnóstico: guarda token/uid para a mensagem de erro exibir
+      // exatamente o que foi usado na tentativa de conexão.
+      _debugTokenLen = voiceToken.token.length;
+      _debugVoiceUid = voiceUid;
+
       final screenUid = kIsWeb ? null : Random.secure().nextInt(0x7ffffffe) + 1;
       String? screenToken;
       if (screenUid != null) {
-        final screenTokenResponse = await supabase.functions.invoke(
-          'agora-token',
-          body: {'channelName': widget.roomId, 'uid': screenUid},
-        );
-        screenToken = (screenTokenResponse.data as Map)['token'] as String;
+        final screenTokenResult = await _fetchAgoraToken(screenUid);
+        screenToken = screenTokenResult.token;
       }
       _localScreenAgoraUid = screenUid;
+      final token = voiceToken.token;
+
+      // 5. Diagnóstico do join: canal/uid/tamanho — nunca o token.
+      debugPrint('[call] join canal=${widget.roomId} '
+          'voiceUid=$voiceUid tokenLen=${voiceToken.token.length}');
 
       // 3. Entra no canal de voz de verdade (Agora), com esse token.
+      // IMPORTANTE: voiceUid vai explicitamente — o token foi gerado PARA
+      // esse uid; entrar com outro (ou 0) rejeita o token (invalidToken).
       await _voiceService.joinChannel(
         channelName: widget.roomId,
+        voiceUid: voiceUid,
         screenShareUid: screenUid,
         screenShareToken: screenToken,
         token: token,
@@ -292,32 +390,51 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
         onJoinSuccess: (uid) async {
           _localAgoraUid = uid;
           if (kIsWeb) _localScreenAgoraUid = uid;
-          if (mounted) setState(() => _agoraJoinConfirmed = true);
+          if (mounted) {
+            setState(() {
+              _agoraJoinConfirmed = true;
+              _errorMessage = null; // voz conectou — limpa erros anteriores
+            });
+          }
           await _trackPresence();
         },
         onScreenShareStateChanged: (sharing) async {
           if (!mounted) return;
           if (_screenSharing != sharing) setState(() => _screenSharing = sharing);
-          // ForÃ§a reconstruir o tile de preview local â€” sem isso, o Agora
-          // Ã s vezes nÃ£o associa o VideoView ao stream de tela no web.
+          // Força reconstruir o tile de preview local — sem isso, o Agora
+          // às vezes não associa o VideoView ao stream de tela no web.
           setState(() {});
           await _trackPresence();
         },
         onErrorOccurred: (description) {
-          if (mounted) {
-            setState(() => _errorMessage = 'Erro do Agora: $description');
+          if (!mounted) return;
+          // Falha só do compartilhamento de tela: não derruba a voz.
+          if (description.contains('Compartilhamento de tela indisponível')) {
+            setState(() => _screenShareWarning = description);
+            return;
           }
+          setState(() => _errorMessage =
+              'Erro do Agora: $description '
+              '(tokenLen=$_debugTokenLen, voiceUid=$_debugVoiceUid, '
+              'appIdLen=${AppConfig.agoraAppId.length})');
         },
       );
 
       if (mounted) setState(() => _connecting = false);
     } catch (e) {
+      // Se a entrada falhou (token, rede etc.), o motor pode ter ficado
+      // no canal — sem liberar, a próxima tentativa dá -17 (rejected).
+      try {
+        await _voiceService.leaveChannel();
+      } catch (_) {}
       if (mounted) {
         setState(() {
           _connecting = false;
           _errorMessage = _friendlyVoiceError(e);
         });
       }
+    } finally {
+      _joining = false;
     }
   }
 
@@ -331,23 +448,26 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
       'screen_sharing': _screenSharing,
       'agora_uid': _localAgoraUid,
       'screen_uid': _localScreenAgoraUid,
+      // Ajuda o outro lado a renderizar a fonte certa: web publica o
+      // stream de tela como CAMERA; Android como SCREEN.
+      'client_platform': kIsWeb ? 'web' : 'native',
     });
   }
 
   /// Traduz os erros mais comuns do Agora/navegador para uma frase
-  /// legÃ­vel, em vez de despejar o stack trace tÃ©cnico na tela.
+  /// legível, em vez de despejar o stack trace técnico na tela.
   String _friendlyVoiceError(Object e) {
     final raw = e.toString();
     if (raw.contains('NotFoundError') ||
         raw.contains('Requested device not found')) {
       return 'Nenhum microfone foi encontrado neste dispositivo. '
-          'VocÃª entrou na chamada, mas nÃ£o vai conseguir falar atÃ© conectar um microfone.';
+          'Você entrou na chamada, mas não vai conseguir falar até conectar um microfone.';
     }
     if (raw.contains('NotAllowedError') || raw.contains('Permission denied')) {
-      return 'PermissÃ£o de microfone negada. Libere o acesso ao microfone '
-          'nas configuraÃ§Ãµes do navegador e recarregue a pÃ¡gina.';
+      return 'Permissão de microfone negada. Libere o acesso ao microfone '
+          'nas configurações do navegador e recarregue a página.';
     }
-    return 'NÃ£o foi possÃ­vel conectar: $raw';
+    return 'Não foi possível conectar: $raw';
   }
 
   Future<void> _toggleMic() async {
@@ -358,7 +478,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
       setState(() => _micMuted = muted);
       await _trackPresence();
     } catch (error) {
-      _showCallError('NÃ£o foi possÃ­vel alterar o microfone: $error');
+      _showCallError('Não foi possível alterar o microfone: $error');
     }
   }
 
@@ -370,7 +490,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
       setState(() => _cameraOn = enabled);
       await _trackPresence();
     } catch (error) {
-      _showCallError('NÃ£o foi possÃ­vel alterar a cÃ¢mera: $error');
+      _showCallError('Não foi possível alterar a câmera: $error');
     }
   }
 
@@ -382,7 +502,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
   Future<ScreenCaptureSourceInfo?> _chooseScreenCaptureSource() async {
     final sources = await _voiceService.getScreenCaptureSources();
     if (sources.isEmpty) {
-      throw StateError('NÃ£o foi encontrada nenhuma tela ou janela disponÃ­vel.');
+      throw StateError('Não foi encontrada nenhuma tela ou janela disponível.');
     }
     if (!mounted) return null;
 
@@ -441,7 +561,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
         if (source == null && _usesDesktopSourcePicker) return;
         final screenUid = _localScreenAgoraUid;
         if (screenUid == null) {
-          throw StateError('A conexÃ£o da chamada ainda nÃ£o estÃ¡ pronta.');
+          throw StateError('A conexão da chamada ainda não está pronta.');
         }
         await _voiceService.startScreenShare(
           uid: screenUid,
@@ -454,9 +574,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
     } catch (error) {
       if (error is UnsupportedError) {
         _showCallError(error.message?.toString() ??
-            'O compartilhamento de tela nÃ£o estÃ¡ disponÃ­vel nesta plataforma.');
+            'O compartilhamento de tela não está disponível nesta plataforma.');
       } else {
-        _showCallError('NÃ£o foi possÃ­vel compartilhar a tela: $error');
+        _showCallError('Não foi possível compartilhar a tela: $error');
       }
     }
   }
@@ -473,7 +593,8 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
         uid,
         widget.roomId,
         localUid: localUid,
-        screenShare: !kIsWeb,
+        // Mesma regra do grid: fonte conforme a plataforma do remetente.
+        screenShare: (participant.clientPlatform ?? 'native') != 'web',
       );
     }
 
@@ -500,7 +621,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'TransmissÃ£o de ${participant.displayName}',
+                          'Transmissão de ${participant.displayName}',
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w600,
@@ -509,7 +630,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                         ),
                       ),
                       IconButton(
-                        tooltip: 'Voltar Ã  chamada',
+                        tooltip: 'Voltar à chamada',
                         onPressed: () => Navigator.of(dialogContext).pop(),
                         icon: const Icon(Icons.close_rounded,
                             color: Colors.white),
@@ -532,8 +653,8 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
   }
 
   Future<void> _disconnect() async {
-    // Ignora falha do Agora: mesmo se leaveChannel() estourar (engine já
-    // morta, ex: após o erro -1 de conexão), a UI precisa sair da call.
+    // Ignora falha do Agora: mesmo se leaveChannel() estourar (engine jï¿½
+    // morta, ex: apï¿½s o erro -1 de conexï¿½o), a UI precisa sair da call.
     try {
       await _voiceService.leaveChannel();
     } catch (_) {}
@@ -562,8 +683,8 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
 
   @override
   void dispose() {
-    // Se o host remover o overlay sem passar pelo botÃ£o de desconectar,
-    // ainda assim liberamos o microfone/cÃ¢mera e saÃ­mos do Presence.
+    // Se o host remover o overlay sem passar pelo botão de desconectar,
+    // ainda assim liberamos o microfone/câmera e saímos do Presence.
     _voiceService.leaveChannel();
     supabase.removeChannel(_presenceChannel);
     super.dispose();
@@ -595,7 +716,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
           : int.tryParse(screenUidValue?.toString() ?? '');
       return _VoiceParticipant(
         userId: payload['user_id'] as String,
-        displayName: payload['display_name'] as String? ?? 'AlguÃ©m',
+        displayName: payload['display_name'] as String? ?? 'Alguém',
         avatarUrl: payload['avatar_url'] as String?,
         micMuted: payload['mic_muted'] as bool? ?? false,
         cameraOn: payload['camera_on'] as bool? ?? false,
@@ -605,13 +726,14 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
             ? screenUid
             : null,
         isLocal: false,
+        clientPlatform: payload['client_platform'] as String?,
       );
     }).toList();
 
     return [
       _VoiceParticipant(
         userId: widget.myUserId,
-        displayName: '${widget.myDisplayName} (vocÃª)',
+        displayName: '${widget.myDisplayName} (você)',
         avatarUrl: widget.myAvatarUrl,
         micMuted: _micMuted,
         cameraOn: _cameraOn,
@@ -626,9 +748,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Sem PopScope: nÃ£o somos uma rota. O botÃ£o "minimizar" apenas troca
-    // o layout â€” e, minimizado, este widget Ã© um Stack pequeno no canto,
-    // deixando todo o resto do app clicÃ¡vel por baixo.
+    // Sem PopScope: não somos uma rota. O botão "minimizar" apenas troca
+    // o layout — e, minimizado, este widget é um Stack pequeno no canto,
+    // deixando todo o resto do app clicável por baixo.
     return _isMinimized
         ? _buildMinimizedCallOverlay(context)
         : _buildCallScreen();
@@ -642,11 +764,11 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
           children: [
             _CallTopBar(
               channelName: widget.channelName,
-              // SÃ³ mostra "Conectado" quando o Agora CONFIRMOU de
-              // verdade (onJoinSuccess) â€” nÃ£o apenas quando o comando
+              // Só mostra "Conectado" quando o Agora CONFIRMOU de
+              // verdade (onJoinSuccess) — não apenas quando o comando
               // de entrar foi enviado sem erro. Isso evita a tela
-              // mentir "Conectado" enquanto o Ã¡udio na real nunca saiu
-              // do lugar (ex: token invÃ¡lido, erro de rede).
+              // mentir "Conectado" enquanto o áudio na real nunca saiu
+              // do lugar (ex: token inválido, erro de rede).
               connecting: _connecting || !_agoraJoinConfirmed,
               onInvite: _openInviteDialog,
               onMinimize: () => setState(() => _isMinimized = true),
@@ -698,10 +820,17 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                               } else if (_localAgoraUid != null &&
                                   participant.screenSharing &&
                                   participant.screenAgoraUid != null) {
+                                // Fonte do remote conforme a PLATAFORMA DO
+                                // REMETENTE: web publica como CAMERA,
+                                // nativo (Android/Windows) como SCREEN.
+                                final senderIsNative =
+                                    (participant.clientPlatform ?? 'native') !=
+                                        'web';
                                 videoView = _voiceService.remoteVideoView(
                                   participant.screenAgoraUid!,
                                   widget.roomId,
                                   localUid: _localAgoraUid!,
+                                  screenShare: senderIsNative,
                                 );
                                 if (participant.cameraOn &&
                                     participant.agoraUid != null) {
@@ -755,9 +884,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
 
   Widget _buildMinimizedCallOverlay(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    // Stack cujo ÃšNICO filho Ã© o mini-player posicionado no canto. Um Stack
-    // sÃ³ ocupa (e captura cliques) na Ã¡rea dos seus filhos â€” o resto do
-    // aplicativo por baixo permanece totalmente clicÃ¡vel.
+    // Stack cujo ÃšNICO filho é o mini-player posicionado no canto. Um Stack
+    // só ocupa (e captura cliques) na área dos seus filhos — o resto do
+    // aplicativo por baixo permanece totalmente clicável.
     if (size.width < 600) {
       return Stack(
         children: [
@@ -765,7 +894,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
             right: 12,
             bottom: 12,
             child: Tooltip(
-              message: '${widget.channelName} â€” voltar Ã  chamada',
+              message: '${widget.channelName} — voltar à chamada',
               child: Material(
                 color: _C.blurple,
                 elevation: 12,
@@ -819,7 +948,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                         ),
                       ),
                       IconButton(
-                        tooltip: 'Voltar Ã  chamada',
+                        tooltip: 'Voltar à chamada',
                         onPressed: () => setState(() => _isMinimized = false),
                         icon: Icon(Icons.open_in_full_rounded, color: _C.textMuted),
                       ),
@@ -842,7 +971,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                         ),
                       ),
                       IconButton(
-                        tooltip: _cameraOn ? 'Desligar cÃ¢mera' : 'Ligar cÃ¢mera',
+                        tooltip: _cameraOn ? 'Desligar câmera' : 'Ligar câmera',
                         onPressed: _toggleCamera,
                         icon: Icon(
                           _cameraOn
@@ -1023,7 +1152,7 @@ class _ParticipantTile extends StatelessWidget {
                 color: Colors.black54,
                 borderRadius: BorderRadius.circular(8),
                 child: IconButton(
-                  tooltip: 'Assistir transmissÃ£o em tela cheia',
+                  tooltip: 'Assistir transmissão em tela cheia',
                   onPressed: onExpandScreenShare,
                   icon:
                       const Icon(Icons.fullscreen_rounded, color: Colors.white),
@@ -1109,7 +1238,7 @@ class _CallControlBar extends StatelessWidget {
             icon:
                 cameraOn ? Icons.videocam_rounded : Icons.videocam_off_rounded,
             isActive: !cameraOn,
-            tooltip: cameraOn ? 'Desligar cÃ¢mera' : 'Ligar cÃ¢mera',
+            tooltip: cameraOn ? 'Desligar câmera' : 'Ligar câmera',
             onTap: onToggleCamera,
           ),
           const SizedBox(width: 16),
@@ -1195,7 +1324,7 @@ class _CallActionButtonState extends State<_CallActionButton> {
 }
 
 // =========================================================================
-// DIÃLOGO "CONVIDAR AMIGOS" â€” lista os amigos aceitos e manda um convite
+// DIÁLOGO "CONVIDAR AMIGOS" — lista os amigos aceitos e manda um convite
 // (mensagem de DM especial, ver kVoiceInvitePrefix) para cada um
 // selecionado.
 // =========================================================================
@@ -1288,7 +1417,7 @@ class _InviteFriendsDialogState extends State<_InviteFriendsDialog> {
                     if (friends.isEmpty) {
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 24),
-                        child: Text('Você ainda não tem amigos adicionados.',
+                        child: Text('Vocï¿½ ainda nï¿½o tem amigos adicionados.',
                             style: TextStyle(color: _C.textMuted)),
                       );
                     }

@@ -8,8 +8,16 @@
 // e essa função gera na hora, sempre válido.
 // =========================================================================
 import { serve } from 'https://deno.land/std@0.203.0/http/server.ts';
-import { RtcTokenBuilder, RtcRole } from 'npm:agora-token@2.0.4';
+import { RtcTokenBuilder, RtcRole } from 'npm:agora-token@2.0.7';
 
+// TTL do token E dos privilégios, em SEGUNDOS (duração — não timestamp
+// absoluto). A builder da lib 2.x espera durações nesses dois
+// parâmetros: passar um timestamp absoluto (agora+3600) faz o token
+// valer ~57 anos, e o Agora o rejeita (invalidToken).
+const TOKEN_TTL_SECONDS = 3600;
+
+// Variáveis do SERVIDOR (Dashboard → Edge Functions → Secrets). O App
+// Certificate nunca vai para o app cliente — a função só devolve tokens.
 const AGORA_APP_ID = Deno.env.get('AGORA_APP_ID')!;
 const AGORA_APP_CERTIFICATE = Deno.env.get('AGORA_APP_CERTIFICATE')!;
 
@@ -34,24 +42,38 @@ serve(async (req) => {
       });
     }
 
-    // Token válido por 1 hora — tempo de sobra pra uma chamada de voz
-    // normal. Se quiser chamadas mais longas, aumente esse valor.
-    const expirationTimeInSeconds = 3600;
-    const currentTimestamp = Math.floor(Date.now() / 1000);
-    const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
+    // Se o App Certificate não estiver configurado no servidor, o projeto
+    // Agora está em Testing mode — nesse modo o Agora rejeita QUALQUER
+    // token (mesmo assinado com "") e o correto é entrar SEM token.
+    // Devolvemos token vazio; o app já trata isso (envia '').
+    if (!AGORA_APP_CERTIFICATE) {
+      return new Response(JSON.stringify({ token: '', testingMode: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
+    // Builder da lib 2.x: tokenExpire e privilegeExpire são
+    // DURAÇÕES em segundos a partir de agora (não timestamps absolutos).
     const token = RtcTokenBuilder.buildTokenWithUid(
       AGORA_APP_ID,
       AGORA_APP_CERTIFICATE,
       channelName,
       uid ?? 0,
       RtcRole.PUBLISHER,
-      privilegeExpiredTs,
+      TOKEN_TTL_SECONDS,
+      TOKEN_TTL_SECONDS,
     );
 
-    return new Response(JSON.stringify({ token }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({
+        token,
+        appId: AGORA_APP_ID,
+        uid: uid ?? 0,
+      }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      },
+    );
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e) }), {
       status: 500,

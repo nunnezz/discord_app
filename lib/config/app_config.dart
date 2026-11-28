@@ -17,7 +17,14 @@ class AppConfig {
     // build, não precisa de --dart-define). O fallback para
     // String.fromEnvironment fica nos getters.
     try {
-      await dotenv.load(fileName: '.env');
+      // No Android, o aapt exclui dotfiles (".env" não entra no APK);
+      // por isso mantemos uma cópia sem ponto inicial: assets/env.txt.
+      // Na web/desktop, "assets/env.txt" também funciona (rootBundle).
+      try {
+        await dotenv.load(fileName: 'assets/env.txt');
+      } catch (_) {
+        await dotenv.load(fileName: '.env');
+      }
       _dotenvReady = true;
     } catch (e) {
       _dotenvReady = false;
